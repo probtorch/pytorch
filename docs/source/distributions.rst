@@ -67,6 +67,12 @@ Probability distributions - torch.distributions
 .. autoclass:: Laplace
     :members:
 
+:hidden:`MultivariateNormal`
+~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: MultivariateNormal
+    :members:
+
 :hidden:`Normal`
 ~~~~~~~~~~~~~~~~~~~~~~~
 
