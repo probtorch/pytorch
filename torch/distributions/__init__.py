@@ -33,13 +33,31 @@ policy, the code for implementing REINFORCE would be as follows::
 from .bernoulli import Bernoulli
 from .beta import Beta
 from .categorical import Categorical
+from .cauchy import Cauchy
 from .dirichlet import Dirichlet
 from .distribution import Distribution
-from .gamma import Gamma
-from .normal import Normal
 from .exponential import Exponential
+from .gamma import Gamma
+from .chi2 import Chi2
 from .laplace import Laplace
 from .multivariate_normal import MultivariateNormal
+from .normal import Normal
+from .one_hot_categorical import OneHotCategorical
+from .uniform import Uniform
 
-
-__all__ = ['Distribution', 'Bernoulli', 'Beta', 'Categorical', 'Dirichlet', 'Gamma', 'Normal', 'Exponential', 'Laplace', 'MultivariateNormal']
+__all__ = [
+    'Bernoulli',
+    'Beta',
+    'Categorical',
+    'Cauchy',
+    'Chi2',
+    'Dirichlet',
+    'Distribution',
+    'Exponential',
+    'Gamma',
+    'Laplace',
+    'MultivariateNormal',
+    'Normal',
+    'OneHotCategorical',
+    'Uniform',
+]

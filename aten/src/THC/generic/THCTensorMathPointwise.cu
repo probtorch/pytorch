@@ -39,6 +39,7 @@ IMPLEMENT_CUDA_TENSOR_BASIC_FUNC(  log, THCNumerics<real>::log,   Real)
 IMPLEMENT_CUDA_TENSOR_BASIC_FUNC(lgamma, THCNumerics<real>::lgamma, Real)
 IMPLEMENT_CUDA_TENSOR_BASIC_FUNC(log1p, THCNumerics<real>::log1p, Real)
 IMPLEMENT_CUDA_TENSOR_BASIC_FUNC(  exp, THCNumerics<real>::exp,   Real)
+IMPLEMENT_CUDA_TENSOR_BASIC_FUNC(expm1, THCNumerics<real>::expm1, Real)
 IMPLEMENT_CUDA_TENSOR_BASIC_FUNC(  cos, THCNumerics<real>::cos,   Real)
 IMPLEMENT_CUDA_TENSOR_BASIC_FUNC(  sin, THCNumerics<real>::sin,   Real)
 IMPLEMENT_CUDA_TENSOR_BASIC_FUNC( sqrt, THCNumerics<real>::sqrt,  Real)
@@ -167,6 +168,41 @@ void THCTensor_(sigmoid)(THCState* state, THCTensor* self_, THCTensor* src) {
     if (!THC_pointwiseApply2(state, self_, src, TensorSigmoidOp<real>())) {
       THArgCheck(false, 2, CUTORCH_DIM_WARNING);
     }
+  }
+
+  THCudaCheck(cudaGetLastError());
+}
+
+void THCTensor_(digamma)(THCState* state, THCTensor* self_, THCTensor* src) {
+  THCAssertSameGPU(THCTensor_(checkGPU)(state, 2, self_, src));
+  if (self_ != src) {
+    THCTensor_(resizeAs)(state, self_, src);
+  }
+  if (!THC_pointwiseApply2(state, self_, src, TensorDigammaOp<real, accreal>())) {
+    THArgCheck(false, 2, CUTORCH_DIM_WARNING);
+  }
+
+  THCudaCheck(cudaGetLastError());
+}
+
+void THCTensor_(polygamma)(THCState* state, THCTensor* self_, int64_t n, THCTensor* src) {
+  THCAssertSameGPU(THCTensor_(checkGPU)(state, 2, self_, src));
+  if (self_ != src) {
+    THCTensor_(resizeAs)(state, self_, src);
+  }
+  switch (n) {
+    case 0:
+      if (!THC_pointwiseApply2(state, self_, src, TensorDigammaOp<real, accreal>())) {
+        THArgCheck(false, 2, CUTORCH_DIM_WARNING);
+      }
+      break;
+    case 1:
+      if (!THC_pointwiseApply2(state, self_, src, TensorTrigammaOp<real, accreal>())) {
+        THArgCheck(false, 2, CUTORCH_DIM_WARNING);
+      }
+      break;
+    default:
+      THError("polygamma(n,x) is not implemented for n>=2");
   }
 
   THCudaCheck(cudaGetLastError());

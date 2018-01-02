@@ -43,8 +43,8 @@ def export(model, args, f, export_params=True, verbose=False, training=False,
            input_names=None, output_names=None, aten=False):
     """
     Export a model into ONNX format.  This exporter runs your model
-    once in order to get a trace of its execution to be exported; at the
-    moment, it does not support dynamic models (e.g., RNNs.)
+    once in order to get a trace of its execution to be exported;
+    at the moment, it supports a limited set of dynamic models (e.g., RNNs.)
 
     See also: :ref:`onnx-export`
 
@@ -266,7 +266,9 @@ def _graph_op(g, opname, *raw_args, **kwargs):
     kwargs = dict((k, v) for k, v in kwargs.items() if v is not None)
 
     def const_if_tensor(arg):
-        if isinstance(arg, torch._C.Value):
+        if arg is None:
+            return arg
+        elif isinstance(arg, torch._C.Value):
             return arg
         else:
             return g.op("Constant", value_z=arg)

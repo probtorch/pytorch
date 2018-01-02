@@ -15,6 +15,12 @@ if [[ "$1" == "--with-cuda" ]]; then
   shift
 fi
 
+WITH_NNPACK=0
+if [[ "$1" == "--with-nnpack" ]]; then
+  WITH_NNPACK=1
+  shift
+fi
+
 cd "$(dirname "$0")/../.."
 PWD=`printf "%q\n" "$(pwd)"`
 BASE_DIR="$PWD"
@@ -95,6 +101,7 @@ function build() {
               -DTHCUNN_SO_VERSION=1 \
               -DTHD_SO_VERSION=1 \
               -DNO_CUDA=$((1-$WITH_CUDA)) \
+              -DNO_NNPACK=$((1-$WITH_NNPACK)) \
               -DNCCL_EXTERNAL=1 \
               -Dnanopb_BUILD_GENERATOR=0 \
               -DCMAKE_DEBUG_POSTFIX="" \
@@ -152,6 +159,7 @@ function build_aten() {
   ${CMAKE_GENERATOR} \
   -DCMAKE_BUILD_TYPE=$([ $DEBUG ] && echo Debug || echo Release) \
   -DNO_CUDA=$((1-$WITH_CUDA)) \
+  -DNO_NNPACK=$((1-$WITH_NNPACK)) \
   -DCUDNN_INCLUDE_DIR=$CUDNN_INCLUDE_DIR \
   -DCUDNN_LIB_DIR=$CUDNN_LIB_DIR \
   -DATEN_NO_CONTRIB=1 \

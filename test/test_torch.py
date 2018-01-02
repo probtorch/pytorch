@@ -197,6 +197,17 @@ class TestTorch(TestCase):
     def test_lgamma(self):
         self._testMathByName('lgamma')
 
+    @unittest.skipIf(not TEST_SCIPY, "Scipy not found")
+    def test_digamma(self):
+        from scipy.special import digamma
+        self._testMath(torch.digamma, digamma)
+
+    @unittest.skipIf(not TEST_SCIPY, "Scipy not found")
+    def test_polygamma(self):
+        from scipy.special import polygamma
+        for n in [0, 1]:
+            self._testMath(lambda x: torch.polygamma(n, x), lambda x: polygamma(n, x)[()])
+
     def test_asin(self):
         self._testMath(torch.asin, lambda x: math.asin(x) if abs(x) <= 1 else float('nan'))
 
@@ -241,6 +252,9 @@ class TestTorch(TestCase):
 
     def test_exp(self):
         self._testMathByName('exp')
+
+    def test_expm1(self):
+        self._testMathByName('expm1')
 
     def test_floor(self):
         self._testMathByName('floor')
@@ -3755,6 +3769,24 @@ class TestTorch(TestCase):
             dest2[idx[i]] = dest2[idx[i]] + src[i]
         self.assertEqual(dest, dest2)
 
+    def test_index_select(self):
+        src = torch.randn(3, 4, 5)
+        # Index can be duplicated.
+        idx = torch.LongTensor([2, 1, 0, 1, 2])
+        dest = torch.index_select(src, 0, idx)
+        self.assertEqual(dest.shape, (5, 4, 5))
+        for i in range(idx.size(0)):
+            self.assertEqual(dest[i], src[idx[i]])
+
+        # Check that 'out' is used correctly.
+        out = torch.randn(5 * 4 * 5)
+        dest = torch.index_select(src, 0, idx, out=out.view(5, 4, 5))
+        self.assertEqual(dest.shape, (5, 4, 5))
+        for i in range(idx.size(0)):
+            self.assertEqual(dest[i], src[idx[i]])
+        out.fill_(0.123)
+        self.assertEqual(out, dest.view(-1))  # Must point to the same storage.
+
     def test_take(self):
         def check(src, idx):
             expected = src.contiguous().view(-1).index_select(
@@ -4906,7 +4938,8 @@ class TestTorch(TestCase):
             np.int64,
             np.int32,
             np.int16,
-            np.uint8
+            np.uint8,
+            np.longlong,
         ]
         for dtype in dtypes:
             array = np.array([1, 2, 3, 4], dtype=dtype)
