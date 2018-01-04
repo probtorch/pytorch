@@ -34,6 +34,7 @@ from torch.distributions import (Bernoulli, Beta, Categorical, Cauchy, Chi2,
                                  Dirichlet, Exponential, Gamma, Laplace,
                                  Normal, OneHotCategorical, Pareto, Uniform)
 from torch.distributions.constraints import Constraint, is_dependent
+from torch.distributions.transforms import transform
 
 TEST_NUMPY = True
 try:
@@ -1085,6 +1086,52 @@ class TestConstraints(TestCase):
                 message = '{} example {}/{} sample = {}'.format(
                     Dist.__name__, i, len(params), value)
                 self.assertTrue(constraint.check(value).all(), msg=message)
+
+    def test_params_transform(self):
+        for Dist, params in EXAMPLES:
+            for i, param in enumerate(params):
+                dist = Dist(**param)
+                for name, value in param.items():
+                    if not (torch.is_tensor(value) or isinstance(value, Variable)):
+                        value = torch.Tensor([value])
+                    if Dist in (Categorical, OneHotCategorical) and name == 'probs':
+                        # These distributions accept positive probs, but elsewhere we
+                        # use a stricter constraint to the simplex.
+                        value = value / value.sum(-1, True)
+                    constraint = dist.params[name]
+                    if is_dependent(constraint):
+                        continue
+                    try:
+                        t = transform(constraint)
+                    except NotImplementedError:
+                        continue
+                    unconstrained = t.to_unconstrained(value)
+                    actual = t.to_constrained(unconstrained)
+                    message = '{} example {}/{} parameter {}. expected {}, actual {}'.format(
+                        Dist.__name__, i, len(params), name, value, actual)
+                    self.assertEqual(actual, value, message=message)
+
+    def test_support_transform(self):
+        for Dist, params in EXAMPLES:
+            for i, param in enumerate(params):
+                dist = Dist(**param)
+                value = dist.sample()
+                try:
+                    t = transform(dist.support)
+                except NotImplementedError:
+                    continue
+                unconstrained = t.to_unconstrained(value)
+                actual = t.to_constrained(unconstrained)
+                # Handle infinity and large values.
+                rel_error = torch.abs(actual - value) / (1 + torch.abs(value))
+                if isinstance(rel_error, Variable):
+                    rel_error = rel_error.data
+                    rel_error[(actual == value).data] = 0
+                else:
+                    rel_error[actual == value] = 0
+                message = '{} example {}/{} sample. expected {}, actual {}'.format(
+                    Dist.__name__, i, len(params), value, actual)
+                self.assertEqual(rel_error.max(), 0, message)
 
 
 if __name__ == '__main__':

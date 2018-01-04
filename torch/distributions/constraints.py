@@ -138,7 +138,8 @@ class _LowerTriangular(Constraint):
     Constrain to lower-triangular square matrices.
     """
     def check(self, value):
-        return (torch.tril(value) == value).min(-1).min(-1)
+        mask = torch.tril(value.new([1]).byte().expand(value.shape[-2:]))
+        return (~mask & value == 0).min(-1).min(-1)
 
 
 # Public interface.
