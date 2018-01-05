@@ -139,7 +139,7 @@ class _LowerTriangular(Constraint):
     """
     def check(self, value):
         mask = torch.tril(value.new([1]).byte().expand(value.shape[-2:]))
-        return (~mask & value == 0).min(-1).min(-1)
+        return (mask | (value == 0)).min(-1)[0].min(-1)[0]
 
 
 # Public interface.

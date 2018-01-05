@@ -33,7 +33,7 @@ from torch.autograd import Variable, gradcheck
 from torch.distributions import (Bernoulli, Beta, Categorical, Cauchy, Chi2,
                                  Dirichlet, Exponential, Gamma, Laplace,
                                  Normal, OneHotCategorical, Pareto, Uniform)
-from torch.distributions.constraints import Constraint, is_dependent
+from torch.distributions.constraints import Constraint, is_dependent, lower_triangular
 from torch.distributions.transforms import transform
 
 TEST_NUMPY = True
@@ -1132,6 +1132,16 @@ class TestConstraints(TestCase):
                 message = '{} example {}/{} sample. expected {}, actual {}'.format(
                     Dist.__name__, i, len(params), value, actual)
                 self.assertEqual(rel_error.max(), 0, message)
+
+    def test_lower_triangular_check(self):
+        for shape in [(2, 2), (2, 3, 3), (2, 3, 4, 4)]:
+            shape = torch.Size(shape)
+            bad = torch.ones(shape)
+            self.assertFalse(lower_triangular.check(bad).any())
+            good = torch.tril(torch.ones(shape[-2:]))
+            good = good.view((1,) * (len(shape) - 2) + shape[-2:])
+            good = good.expand(shape)
+            self.assertTrue(lower_triangular.check(good).all())
 
 
 if __name__ == '__main__':

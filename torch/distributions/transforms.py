@@ -74,7 +74,7 @@ class Transform(object):
     inverse pairs since the unconstrained space may have extra dimensions that
     are projected out; only the one-sided inverse equation is guaranteed::
 
-        x == c.to_constrained(c.to_unconstrained(x))
+        x == t.to_constrained(t.to_unconstrained(x))
 
     """
     def __init__(self, constraint):
