@@ -18,6 +18,16 @@ def transform(constraint):
         constraint = Normal.params['scale']
         scale = transform(constraint).to_constrained(torch.zeros(1))
         u = transform(constraint).to_unconstrained(scale)
+
+    Args:
+        constraint (:class:`~torch.distributions.constraints.Constraint`):
+            A constraint object.
+
+    Returns:
+        A :class:`Transform` object.
+
+    Raises:
+        `NotImplementedError` if no transform has been registered.
     """
     # Look up by singleton instance.
     try:
@@ -35,8 +45,8 @@ def transform(constraint):
 
 def register_transform(constraint):
     """
-    Decorator to register a `Constraint` subclass or singleton object with the
-    `torch.distributions.transforms.transform()` function. Usage::
+    Decorator to register a :class:`~torch.distributions.constraints.Constraint`
+    subclass or singleton object with the :meth:`transform` function. Usage::
 
         @register_transform(MyConstraintClass)
         class MyTransform(Transform):
@@ -46,8 +56,8 @@ def register_transform(constraint):
                 ...
 
     Args:
-        constraint (Constraint subclass or instance): Either a specific
-            constraint or a class of constraints.
+        constraint (:class:`Constraint` subclass or instance):
+            Either a specific constraint or a class of constraints.
     """
 
     def decorator(transform_class):
@@ -68,14 +78,18 @@ def register_transform(constraint):
 class Transform(object):
     """
     Each constraint class registers a pseudoinverse pair of transforms
-    `to_unconstrained` and `from_unconstrained`. These allow standard
-    parameters to be transformed to an unconstrained space for optimization and
-    transformed back after optimization. Note that these are not necessarily
-    inverse pairs since the unconstrained space may have extra dimensions that
-    are projected out; only the one-sided inverse equation is guaranteed::
+    :meth:`~Transform.to_unconstrained` and :meth:`~Transform.to_constrained`.
+    These allow standard parameters to be transformed to an unconstrained space
+    for optimization and transformed back after optimization. Note that these
+    are not necessarily inverse pairs since the unconstrained space may have
+    extra dimensions that are projected out; only the one-sided inverse
+    equation is guaranteed::
 
         x == t.to_constrained(t.to_unconstrained(x))
 
+    Args:
+        constraint (:class:`~torch.distributions.constraints.Constraint`):
+            A constraint object.
     """
     def __init__(self, constraint):
         self.constraint = constraint
@@ -83,12 +97,24 @@ class Transform(object):
     def to_unconstrained(self, x):
         """
         Transform from constrained coordinates to unconstrained coordinates.
+
+        Args:
+            x (Variable or Tensor): A constrained value.
+
+        Returns:
+            (Variable or Tensor): An unconstrained value.
         """
         raise NotImplementedError
 
     def to_constrained(self, u):
         """
         Transform from unconstrained coordinates to constrained coordinates.
+
+        Args:
+            u (Variable or Tensor): An unconstrained value.
+
+        Returns:
+            (Variable or Tensor): A constrained value.
         """
         raise NotImplementedError
 
@@ -108,7 +134,8 @@ class IdentityTransform(Transform):
 @register_transform(constraints.positive)
 class LogExpTransform(Transform):
     """
-    Transform from the positive reals and back via `log()` and `exp()`.
+    Transform from the positive reals and back via :meth:`~torch.log` and
+    :meth:`~torch.exp`.
     """
     def to_unconstrained(self, x):
         return torch.log(x)
@@ -120,7 +147,9 @@ class LogExpTransform(Transform):
 @register_transform(constraints.greater_than)
 class ShiftLogExpTransform(Transform):
     """
-    Transform from lower-bounded reals and back via `+`, `log()`, and `exp()`.
+    Transform from lower-bounded reals and back via `+`, :meth:`~torch.log`,
+    and :meth:`~torch.exp`.
+
     """
     def to_unconstrained(self, x):
         return torch.log(x - self.constraint.lower_bound)
@@ -133,7 +162,7 @@ class ShiftLogExpTransform(Transform):
 class SigmoidLogitTransform(Transform):
     """
     Transform from an arbitrary interval and back via an affine transform and
-    the `logit()` and `sigmoid()` functions.
+    the `logit()` and :meth:`torch.sigmoid()` functions.
     """
     def to_unconstrained(self, x):
         c = self.constraint
@@ -149,7 +178,8 @@ class SigmoidLogitTransform(Transform):
 @register_transform(constraints.simplex)
 class LogSoftmaxTransform(Transform):
     """
-    Transform from the unit simplex and back via `log()` and `softmax()`.
+    Transform from the unit simplex and back via :meth:`~torch.log` and
+    :meth:`torch.nn.functional.softmax`.
     """
     def to_unconstrained(self, x):
         return torch.log(x)

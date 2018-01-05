@@ -32,17 +32,19 @@ class Distribution(object):
     @property
     def params(self):
         """
-        Returns a dictionary from param names to `Constraint` objects that
+        Returns a dictionary from param names to
+        :class:`~torch.distributions.constraints.Constraint` objects that
         should be satisfied by each parameter of this distribution. For
-        distributions with multiple parameterization, only one complete
-        set of parameters should be specified in `.params`.
+        distributions with multiple parameterization, only one complete set of
+        parameters should be specified in `.params`.
         """
         raise NotImplementedError
 
     @property
     def support(self):
         """
-        Returns a `Constraint` object representing this distribution's support.
+        Returns a :class:`~torch.distributions.constraints.Constraint` object
+        representing this distribution's support.
         """
         raise NotImplementedError
 

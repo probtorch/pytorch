@@ -1,5 +1,20 @@
-import torch
+r"""
+The following constraints are implemented:
 
+- ``constraints.dependent``
+- ``constraints.boolean``
+- ``constraints.greater_than(lower_bound)``
+- ``constraints.integer_interval(lower_bound, upper_bound)``
+- ``constraints.interval(lower_bound, upper_bound)``
+- ``constraints.lower_triangular``
+- ``constraints.nonnegative_integer``
+- ``constraints.positive``
+- ``constraints.real``
+- ``constraints.simplex``
+- ``constraints.unit_interval``
+"""
+
+import torch
 
 __all__ = [
     'Constraint',
@@ -44,13 +59,22 @@ class _Dependent(Constraint):
 
 
 def is_dependent(constraint):
+    """
+    Args:
+        constraint (:class:`Constraint`): A constraint object.
+
+    Returns:
+        (bool): Whether the constrained value is dependent on other values.
+        If so, there is no simple coordinate-wise way to constrain the value.
+    """
     return isinstance(constraint, _Dependent)
 
 
-class _DependentProperty(property, _Dependent):
+class dependent_property(property, _Dependent):
     """
-    Decorator that extends @property to act like a `Dependent` constraint when
-    called on a class and act like a property when called on an object.
+    Decorator that extends :class:`property` to act like a :class:`dependent`
+    constraint when called on a class and act like a property when called on
+    an object.
 
     Example::
 
@@ -81,7 +105,7 @@ class _NonnegativeInteger(Constraint):
         return (value % 1 == 0) & (value >= 0)
 
 
-class _IntegerInterval(Constraint):
+class integer_interval(Constraint):
     """
     Constrain to an integer interval `[lower_bound, upper_bound]`.
     """
@@ -101,7 +125,7 @@ class _Real(Constraint):
         return value == value  # False for NANs.
 
 
-class _GreaterThan(Constraint):
+class greater_than(Constraint):
     """
     Constrain to a real half line `[lower_bound, inf]`.
     """
@@ -112,7 +136,7 @@ class _GreaterThan(Constraint):
         return self.lower_bound <= value
 
 
-class _Interval(Constraint):
+class interval(Constraint):
     """
     Constrain to a real interval `[lower_bound, upper_bound]`.
     """
@@ -142,16 +166,12 @@ class _LowerTriangular(Constraint):
         return (mask | (value == 0)).min(-1)[0].min(-1)[0]
 
 
-# Public interface.
+# Singleton instances for public interface.
 dependent = _Dependent()
-dependent_property = _DependentProperty
 boolean = _Boolean()
 nonnegative_integer = _NonnegativeInteger()
-integer_interval = _IntegerInterval
 real = _Real()
-positive = _GreaterThan(0)
-greater_than = _GreaterThan
-unit_interval = _Interval(0, 1)
-interval = _Interval
+positive = greater_than(0)
+unit_interval = interval(0, 1)
 simplex = _Simplex()
 lower_triangular = _LowerTriangular()

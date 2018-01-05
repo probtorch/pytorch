@@ -90,3 +90,47 @@ Probability distributions - torch.distributions
 
 .. autoclass:: Uniform
     :members:
+
+Constraints
+~~~~~~~~~~~~
+
+.. automodule:: torch.distributions.constraints
+.. currentmodule:: torch.distributions.constraints
+
+:hidden:`Constraint`
+-----------------------
+
+.. autoclass:: Constraint
+    :members:
+
+:hidden:`is_dependent`
+-----------------------------
+
+.. autofunction:: torch.distributions.constraints.is_dependent
+
+:hidden:`@dependent_property`
+-----------------------------
+
+.. autoclass:: torch.distributions.constraints.dependent_property
+
+Transforms
+~~~~~~~~~~~
+
+.. automodule:: torch.distributions.transforms
+.. currentmodule:: torch.distributions.transforms
+
+:hidden:`transform`
+-----------------------------
+
+.. autofunction:: torch.distributions.transforms.transform
+
+:hidden:`Transform`
+-----------------------
+
+.. autoclass:: Transform
+    :members:
+
+:hidden:`register_transform`
+-----------------------------
+
+.. autofunction:: torch.distributions.transforms.register_transform
