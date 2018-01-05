@@ -176,10 +176,10 @@ class LowerTriangularTransform(Transform):
     def to_unconstrained(self, x):
         n = x.size(-1)
         m = n * (n + 1) // 2
-        return x[self._mask(x)].view(x.shape[-2:] + (m,))
+        return x[self._mask(x)].view(x.shape[:-2] + (m,))
 
     def to_constrained(self, u):
-        n = int(round(((8 * u.size(-1) + 1)**0.5 + 1) / 2))
-        x = u.new(n).zero_()
+        n = int(round(((8 * u.size(-1) + 1)**0.5 - 1) / 2))
+        x = u.new(u.shape[:-1] + (n, n)).zero_()
         x[self._mask(x)] = u
         return x

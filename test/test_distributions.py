@@ -1143,6 +1143,22 @@ class TestConstraints(TestCase):
             good = good.expand(shape)
             self.assertTrue(lower_triangular.check(good).all())
 
+    def test_lower_triangular_transform(self):
+        t = transform(lower_triangular)
+        for shape in [(2, 2), (2, 3, 3), (2, 3, 4, 4)]:
+            shape = torch.Size(shape)
+            x = torch.Tensor(shape).normal_()
+            mask = torch.tril(x.new([1]).byte().expand(x.shape[-2:]))
+            mask = mask.view((1,) * (x.dim() - 2) + mask.shape).expand_as(x)
+            x[~mask] = 0
+            self.assertTrue(lower_triangular.check(x).all())
+            u = t.to_unconstrained(x)
+            actual = t.to_constrained(u)
+            self.assertEqual(actual, x)
+            u2 = u + u.new(u.shape).normal_()
+            x2 = t.to_constrained(u2)
+            self.assertTrue(lower_triangular.check(x2).all())
+
 
 if __name__ == '__main__':
     run_tests()
