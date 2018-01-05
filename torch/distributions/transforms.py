@@ -1,3 +1,23 @@
+r"""
+The :mod:`torch.distributions.transforms` module provides a way to generically
+transform from a constrained parameter space to an unconstrained space and
+back. This is useful for optimizing :class:`~torch.distributions.Distribution`
+parameters.
+
+Each :class:`~torch.distributions.Distribution` object registers
+:class:`~torch.distributions.constraints.Constraint` objects for each of its
+parameters. The :meth:`transform` method inputs a constraint and outputs a
+:class:`Transform` object that can transform to and from an unconstrained
+space.
+
+To extend :meth:`transform` with new user-defined constraints and transforms,
+
+1.  define a new :class:`~torch.distributions.constraints.Constraint` subclass
+    or singleton instance, then
+2.  define a new :class:`Transform` subclass and register it with the
+    :meth:`register_transform` decorator.
+"""
+
 from __future__ import division
 
 import torch
