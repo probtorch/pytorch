@@ -20,14 +20,14 @@ class MultivariateNormal(Distribution):
     Example:
 
         >>> m = MultivariateNormal(torch.zeros(2), torch.eye(2))
-        >>> m.sample()  # normally distributed with mean=`[0,0]` and cov=`I`
+        >>> m.sample()  # normally distributed with mean=`[0,0]` and covariance_matrix=`I`
         -0.2102
         -0.5429
         [torch.FloatTensor of size 2]
 
     Args:
         mean (Tensor or Variable): mean of the distribution
-        cov(Tensor or Variable): covariance matrix (sigma positive-definite).
+        covariance_matrix (Tensor or Variable): covariance matrix (sigma positive-definite).
         scale_tril (Tensor or Variable): lower-triangular factor of covariance.
         
     Note:
@@ -37,28 +37,28 @@ class MultivariateNormal(Distribution):
 
     has_rsample = True
 
-    def __init__(self, mean, cov=None, scale_tril=None):
+    def __init__(self, mean, covariance_matrix=None, scale_tril=None):
         batch_shape, event_shape = mean.shape[:-1], mean.shape[-1:]
-        if cov is not None and scale_tril is not None:
+        if covariance_matrix is not None and scale_tril is not None:
             raise ValueError("Either covariance matrix or scale_tril may be specified, not both.")
-        if cov is None and scale_tril is None:
+        if covariance_matrix is None and scale_tril is None:
             raise ValueError("One of either covariance matrix or scale_tril must be specified")
         if scale_tril is None:
-            assert cov.dim() >= 2
-            if cov.dim() > 2:
+            assert covariance_matrix.dim() >= 2
+            if covariance_matrix.dim() > 2:
                 # TODO support batch_shape for covariance
                 raise NotImplementedError("batch_shape for covariance matrix is not yet supported")
             else:
-                scale_tril = torch.potrf(cov, upper=False)
+                scale_tril = torch.potrf(covariance_matrix, upper=False)
         else:
             assert scale_tril.dim() >= 2
             if scale_tril.dim() > 2:
                 # TODO support batch_shape for scale_tril
                 raise NotImplementedError("batch_shape for scale_tril is not yet supported")
             else:
-                cov = torch.mm(scale_tril, scale_tril.t())
+                covariance_matrix = torch.mm(scale_tril, scale_tril.t())
         self.mean = mean
-        self.cov = cov
+        self.covariance_matrix = covariance_matrix
         self.scale_tril = scale_tril
         super(MultivariateNormal, self).__init__(batch_shape, event_shape)
 
@@ -71,7 +71,7 @@ class MultivariateNormal(Distribution):
         self._validate_log_prob_arg(value)
         delta = value - self.mean
         # TODO replace torch.gesv with appropriate solver (e.g. potrs)
-        M = (delta * torch.gesv(delta.view(-1,delta.shape[-1]).t(), self.cov)[0].t().view(delta.shape)).sum(-1)
+        M = (delta * torch.gesv(delta.view(-1,delta.shape[-1]).t(), self.covariance_matrix)[0].t().view(delta.shape)).sum(-1)
         #M = (delta * torch.matmul(delta, torch.inverse(self.cov))).sum(-1)
         log_det = torch.log(self.scale_tril.diag()).sum()
         return -0.5*(M + self.mean.size(-1)*math.log(2*math.pi)) - log_det
