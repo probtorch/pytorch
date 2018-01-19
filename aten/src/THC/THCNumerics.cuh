@@ -30,7 +30,7 @@ struct THCNumerics<uint8_t> {
   static inline __host__ __device__  uint8_t mul(uint8_t a, uint8_t b) { return a * b; }
   static inline __host__ __device__  uint8_t sub(uint8_t a, uint8_t b) { return a - b; }
   static inline __host__ __device__  uint8_t div(uint8_t a, uint8_t b) { return a / b; }
-  static inline __host__ __device__  uint8_t abs(uint8_t a) { return abs(a); }
+  static inline __host__ __device__  uint8_t abs(uint8_t a) { return a; }
 };
 
 template <>
@@ -715,6 +715,12 @@ struct ScalarConvert<half, half> {
     return v;
   }
 };
+
+template <typename T, typename U>
+__host__ __device__ T scalar_cast(U u) {
+  return ScalarConvert<U, T>::to(u);
+}
+
 #endif
 
 #endif // THC_NUMERICS_INC

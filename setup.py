@@ -16,7 +16,8 @@ import glob
 
 from tools.setup_helpers.env import check_env_flag
 from tools.setup_helpers.cuda import WITH_CUDA, CUDA_HOME, CUDA_VERSION
-from tools.setup_helpers.cudnn import WITH_CUDNN, CUDNN_LIB_DIR, CUDNN_INCLUDE_DIR
+from tools.setup_helpers.cudnn import (WITH_CUDNN, CUDNN_LIBRARY,
+                                       CUDNN_LIB_DIR, CUDNN_INCLUDE_DIR)
 from tools.setup_helpers.nccl import WITH_NCCL, WITH_SYSTEM_NCCL, NCCL_LIB_DIR, \
     NCCL_INCLUDE_DIR, NCCL_ROOT_DIR, NCCL_SYSTEM_LIB
 from tools.setup_helpers.nnpack import WITH_NNPACK
@@ -132,6 +133,7 @@ def build_libs(libs):
         build_libs_cmd += ['--with-nnpack']
     if WITH_CUDNN:
         my_env["CUDNN_LIB_DIR"] = CUDNN_LIB_DIR
+        my_env["CUDNN_LIBRARY"] = CUDNN_LIBRARY
         my_env["CUDNN_INCLUDE_DIR"] = CUDNN_INCLUDE_DIR
 
     if subprocess.call(build_libs_cmd + libs, env=my_env) != 0:
@@ -269,7 +271,7 @@ class build_ext(build_ext_parent):
         else:
             print('-- NumPy not found')
         if WITH_CUDNN:
-            print('-- Detected cuDNN at ' + CUDNN_LIB_DIR + ', ' + CUDNN_INCLUDE_DIR)
+            print('-- Detected cuDNN at ' + CUDNN_LIBRARY + ', ' + CUDNN_INCLUDE_DIR)
         else:
             print('-- Not using cuDNN')
         if WITH_CUDA:
@@ -447,6 +449,7 @@ main_sources = [
     "torch/csrc/utils/tensor_types.cpp",
     "torch/csrc/utils/tuple_parser.cpp",
     "torch/csrc/utils/tensor_apply.cpp",
+    "torch/csrc/utils/tensor_flatten.cpp",
     "torch/csrc/allocators.cpp",
     "torch/csrc/serialization.cpp",
     "torch/csrc/jit/init.cpp",
@@ -471,6 +474,7 @@ main_sources = [
     "torch/csrc/jit/passes/peephole.cpp",
     "torch/csrc/jit/passes/inplace_check.cpp",
     "torch/csrc/jit/passes/canonicalize.cpp",
+    "torch/csrc/jit/passes/batch_mm.cpp",
     "torch/csrc/jit/passes/onnx/peephole.cpp",
     "torch/csrc/jit/generated/aten_dispatch.cpp",
     "torch/csrc/autograd/init.cpp",
@@ -489,6 +493,7 @@ main_sources = [
     "torch/csrc/autograd/python_hook.cpp",
     "torch/csrc/autograd/generated/VariableType.cpp",
     "torch/csrc/autograd/generated/Functions.cpp",
+    "torch/csrc/autograd/generated/python_torch_functions.cpp",
     "torch/csrc/autograd/generated/python_variable_methods.cpp",
     "torch/csrc/autograd/generated/python_functions.cpp",
     "torch/csrc/autograd/generated/python_nn_functions.cpp",
@@ -498,7 +503,6 @@ main_sources = [
     "torch/csrc/autograd/functions/special.cpp",
     "torch/csrc/autograd/functions/utils.cpp",
     "torch/csrc/autograd/functions/init.cpp",
-    "torch/csrc/autograd/functions/onnx/basic_ops.cpp",
     "torch/csrc/onnx/onnx.pb.cpp",
     "torch/csrc/onnx/onnx.cpp",
 ]
@@ -567,6 +571,8 @@ if WITH_CUDA:
         "torch/csrc/cuda/Stream.cpp",
         "torch/csrc/cuda/AutoGPU.cpp",
         "torch/csrc/cuda/utils.cpp",
+        "torch/csrc/cuda/comm.cpp",
+        "torch/csrc/cuda/python_comm.cpp",
         "torch/csrc/cuda/expand_utils.cpp",
         "torch/csrc/cuda/serialization.cpp",
     ]
@@ -581,6 +587,7 @@ if WITH_NCCL:
     extra_compile_args += ['-DWITH_NCCL']
     main_sources += [
         "torch/csrc/cuda/nccl.cpp",
+        "torch/csrc/cuda/python_nccl.cpp",
     ]
 if WITH_CUDNN:
     main_libraries += ['cudnn']
@@ -716,18 +723,19 @@ cmdclass = {
 cmdclass.update(build_dep_cmds)
 
 
-setup(name="torch", version=version,
-      description="Tensors and Dynamic neural networks in Python with strong GPU acceleration",
-      ext_modules=extensions,
-      cmdclass=cmdclass,
-      packages=packages,
-      package_data={'torch': [
-          'lib/*.so*', 'lib/*.dylib*', 'lib/*.dll', 'lib/*.lib',
-          'lib/torch_shm_manager',
-          'lib/*.h',
-          'lib/include/TH/*.h', 'lib/include/TH/generic/*.h',
-          'lib/include/THC/*.h', 'lib/include/THC/generic/*.h',
-          'lib/include/ATen/*.h',
-      ]},
-      install_requires=['pyyaml', 'numpy'],
-      )
+if __name__ == '__main__':
+    setup(name="torch", version=version,
+          description="Tensors and Dynamic neural networks in Python with strong GPU acceleration",
+          ext_modules=extensions,
+          cmdclass=cmdclass,
+          packages=packages,
+          package_data={'torch': [
+              'lib/*.so*', 'lib/*.dylib*', 'lib/*.dll', 'lib/*.lib',
+              'lib/torch_shm_manager',
+              'lib/*.h',
+              'lib/include/TH/*.h', 'lib/include/TH/generic/*.h',
+              'lib/include/THC/*.h', 'lib/include/THC/generic/*.h',
+              'lib/include/ATen/*.h',
+          ]},
+          install_requires=['pyyaml', 'numpy'],
+          )

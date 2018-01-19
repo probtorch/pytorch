@@ -4,6 +4,7 @@
 #include "torch/csrc/autograd/variable.h"
 #include "torch/csrc/utils/hash.h"
 
+#include <ATen/ATen.h>
 #include <tuple>
 #include <vector>
 #include <functional>
@@ -62,7 +63,11 @@ struct IODescriptor {
 
 static inline std::ostream& operator<<(std::ostream& out, const IODescriptor::VariableMetadata& meta) {
   auto & t = at::getType(meta.device < 0 ? at::kCPU : at::kCUDA, meta.type);
-  out << t << "(requires_grad=" << meta.requires_grad << ") {";
+  out << t << "(requires_grad=" << meta.requires_grad;
+  if (meta.device > 0) {
+    out << ", device=" << meta.device;
+  }
+  out << ") {";
   for(size_t i = 0; i < meta.sizes.size(); ++i) {
     if(i > 0)
       out << ", ";
@@ -99,6 +104,7 @@ struct ParsedArgs {
 
 
 ParsedArgs flatten(py::handle obj);
-PyObject* unflatten(autograd::variable_list&& outputs, const IODescriptor& structure);
+PyObject* unflatten(at::ArrayRef<autograd::Variable> outputs,
+                    const IODescriptor& structure);
 
 }}} // namespace torch::jit::python

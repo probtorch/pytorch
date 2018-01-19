@@ -378,6 +378,12 @@ Normalization layers
 .. autoclass:: InstanceNorm3d
     :members:
 
+:hidden:`LocalResponseNorm`
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: LocalResponseNorm
+    :members:
+
 Recurrent layers
 ----------------------------------
 
@@ -522,12 +528,6 @@ Loss functions
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. autoclass:: PoissonNLLLoss
-    :members:
-
-:hidden:`NLLLoss2d`
-~~~~~~~~~~~~~~~~~~~
-
-.. autoclass:: NLLLoss2d
     :members:
 
 :hidden:`KLDivLoss`
@@ -942,6 +942,11 @@ Normalization functions
 ~~~~~~~~~~~~~~~~~~~~
 
 .. autofunction:: batch_norm
+
+:hidden:`local_response_norm`
+~~~~~~~~~~~~~~~~~~~~
+
+.. autofunction:: local_response_norm
 
 :hidden:`normalize`
 ~~~~~~~~~~~~~~~~~~~~

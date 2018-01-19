@@ -205,8 +205,10 @@ class TestTorch(TestCase):
     @unittest.skipIf(not TEST_SCIPY, "Scipy not found")
     def test_polygamma(self):
         from scipy.special import polygamma
+        from torch.autograd import Variable
         for n in [0, 1]:
             self._testMath(lambda x: torch.polygamma(n, x), lambda x: polygamma(n, x)[()])
+            self._testMath(lambda x: torch.polygamma(n, Variable(x)).data, lambda x: polygamma(n, x)[()])
 
     def test_asin(self):
         self._testMath(torch.asin, lambda x: math.asin(x) if abs(x) <= 1 else float('nan'))
@@ -2030,19 +2032,19 @@ class TestTorch(TestCase):
         empty = Variable(torch.Tensor())
         x = Variable(torch.arange(0, 16).view(4, 4))
         self.assertEqual(x.slice(), x)
-        self.assertEqual(x.slice(0, 4), x)
+        self.assertEqual(x.slice(0, 0, 4), x)
         # start and stop are clamped to the size of dim
-        self.assertEqual(x.slice(0, 5), x)
+        self.assertEqual(x.slice(0, 0, 5), x)
         # if start >= stop then the result is empty
-        self.assertEqual(x.slice(2, 1), empty)
-        self.assertEqual(x.slice(2, 2), empty)
+        self.assertEqual(x.slice(0, 2, 1), empty)
+        self.assertEqual(x.slice(0, 2, 2), empty)
         # out of bounds is also empty
-        self.assertEqual(x.slice(10, 12), empty)
+        self.assertEqual(x.slice(0, 10, 12), empty)
         # additional correctness checks
-        self.assertEqual(x.slice(0, 1).data.tolist(), [[0, 1, 2, 3]])
-        self.assertEqual(x.slice(0, -3).data.tolist(), [[0, 1, 2, 3]])
-        self.assertEqual(x.slice(-2, 3, dim=1).data.tolist(), [[2], [6], [10], [14]])
-        self.assertEqual(x.slice(0, -1, 2).data.tolist(), [[0, 1, 2, 3], [8, 9, 10, 11]])
+        self.assertEqual(x.slice(0, 0, 1).data.tolist(), [[0, 1, 2, 3]])
+        self.assertEqual(x.slice(0, 0, -3).data.tolist(), [[0, 1, 2, 3]])
+        self.assertEqual(x.slice(start=-2, end=3, dim=1).data.tolist(), [[2], [6], [10], [14]])
+        self.assertEqual(x.slice(0, 0, -1, 2).data.tolist(), [[0, 1, 2, 3], [8, 9, 10, 11]])
 
     def test_is_signed(self):
         # TODO: remove the Variable wrapper once we merge Variable and Tensor
@@ -2696,7 +2698,7 @@ class TestTorch(TestCase):
             if expected_error is None:
                 result = x.stft(frame_length, hop, fft_size, return_onesided, window, pad_end)
                 ref_result = naive_stft(x, frame_length, hop, fft_size, return_onesided, window, pad_end)
-                self.assertEqual(result.data, ref_result, 1e-8, 'stft result')
+                self.assertEqual(result.data, ref_result, 5e-6, 'stft result')
             else:
                 self.assertRaises(expected_error,
                                   lambda: x.stft(frame_length, hop, fft_size, return_onesided, window, pad_end))
@@ -4269,6 +4271,28 @@ class TestTorch(TestCase):
             self.assertEqual(tensor.narrow(dim, start, target_size[dim]), split, 0)
             start = start + target_size[dim]
 
+        # Variable sections split
+        tensor = torch.randn(20, 10)
+        dim = 0
+        split_sizes = [5, 5, 10]
+        target_sizes = ([[5, 10], [5, 10], [10, 10]])
+        splits = tensor.split(split_sizes, dim)
+        start = 0
+        for target_size, split in zip(target_sizes, splits):
+            self.assertEqual(split.size(), target_size)
+            self.assertEqual(tensor.narrow(dim, start, target_size[dim]), split, 0)
+            start = start + target_size[dim]
+
+        split_sizes = [2, 2, 6]
+        target_sizes = ([20, 2], [20, 2], [20, 6])
+        dim = 1
+        splits = tensor.split(split_sizes, dim)
+        start = 0
+        for target_size, split in zip(target_sizes, splits):
+            self.assertEqual(split.size(), target_size)
+            self.assertEqual(tensor.narrow(dim, start, target_size[dim]), split, 0)
+            start = start + target_size[dim]
+
     def test_chunk(self):
         tensor = torch.rand(4, 7)
         num_chunks = 3
@@ -4972,7 +4996,7 @@ class TestTorch(TestCase):
         # check zero dimensional
         x = np.zeros((0, 2))
         self.assertEqual(torch.from_numpy(x).shape, tuple())
-        self.assertEqual(torch.autograd.Variable.from_numpy(x).shape, [0])
+        self.assertEqual(torch._C._VariableFunctions.from_numpy(x).shape, [0])
 
     @unittest.skipIf(not TEST_NUMPY, "Numpy not found")
     def test_ctor_with_numpy_array(self):

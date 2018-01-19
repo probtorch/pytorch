@@ -15,6 +15,7 @@
 #include <initializer_list>
 #include <iostream>
 #include <functional>
+#include <cstddef>
 
 #ifdef _MSC_VER
 #ifdef Type
@@ -37,7 +38,7 @@ static void setattr(jit::Node* n, jit::Symbol name, SparseTensor s)        { n->
 static void setattr(jit::Node* n, jit::Symbol name, const at::IntList& v)  { n->is_(name, v); }
 static void setattr(jit::Node* n, jit::Symbol name, bool v)                { n->i_(name, v); }
 static void setattr(jit::Node* n, jit::Symbol name, double v)              { n->f_(name, v); }
-template<unsigned long N>
+template<std::size_t N>
 static void setattr(jit::Node* n, jit::Symbol name, std::array<bool, N> v) { n->is_(name, std::vector<int64_t>(v.begin(), v.end())); }
 
 VariableType::VariableType(Context* context, Type* baseType)
@@ -141,10 +142,17 @@ Tensor & VariableType::unpack_any(const Tensor & t, const char * name, int pos) 
 }
 
 Tensor VariableType::unpack_opt(const Tensor & t, const char * name, int pos) const {
-  if(!t.defined()) {
+  if (!t.defined()) {
     return Tensor();
   }
   return unpack(t, name, pos);
+}
+
+Tensor VariableType::unpack_any_opt(const Tensor & t, const char * name, int pos) const {
+  if (!t.defined()) {
+    return Tensor();
+  }
+  return unpack_any(t, name, pos);
 }
 
 std::vector<at::Tensor> VariableType::unpack(at::TensorList tl, const char *name, int pos) const {
@@ -187,18 +195,18 @@ std::vector<at::Tensor> VariableType::unpack_idxs(at::TensorList tl, const char 
   return ret;
 }
 
-static Variable as_variable(Tensor tensor) {
+static Tensor as_variable(Tensor tensor) {
   return make_variable(std::move(tensor));
 }
 
-static std::tuple<Variable, Variable>
+static std::tuple<Tensor, Tensor>
 as_variable(std::tuple<Tensor, Tensor> tensors) {
   return std::make_tuple<>(
       make_variable(std::move(std::get<0>(tensors))),
       make_variable(std::move(std::get<1>(tensors))));
 }
 
-static std::tuple<Variable, Variable, Variable>
+static std::tuple<Tensor, Tensor, Tensor>
 as_variable(std::tuple<Tensor, Tensor, Tensor> tensors) {
   return std::make_tuple<>(
       make_variable(std::move(std::get<0>(tensors))),
@@ -206,7 +214,7 @@ as_variable(std::tuple<Tensor, Tensor, Tensor> tensors) {
       make_variable(std::move(std::get<2>(tensors))));
 }
 
-static std::tuple<Variable, Variable, Variable, Variable>
+static std::tuple<Tensor, Tensor, Tensor, Tensor>
 as_variable(std::tuple<Tensor, Tensor, Tensor, Tensor> tensors) {
   return std::make_tuple<>(
       make_variable(std::move(std::get<0>(tensors))),
@@ -215,19 +223,20 @@ as_variable(std::tuple<Tensor, Tensor, Tensor, Tensor> tensors) {
       make_variable(std::move(std::get<3>(tensors))));
 }
 
-static std::vector<Variable> as_variable(TensorList tl) {
-  std::vector<Variable> variables;
+static std::vector<Tensor> as_variable(TensorList tl) {
+  std::vector<Tensor> variables;
   for (auto& t : tl) {
     variables.emplace_back(make_variable(std::move(t)));
   }
   return variables;
 }
 
-static Variable as_view(Variable base, Tensor tensor) {
-  if (base.is_view()) {
-    base = base.base();
+static Tensor as_view(const Tensor & base, Tensor tensor) {
+  auto base_var = Variable(base);
+  if (base_var.is_view()) {
+    base_var = base_var.base();
   }
-  return make_variable_view(std::move(base), std::move(tensor));
+  return make_variable_view(std::move(base_var), std::move(tensor));
 }
 
 static void ensure_no_aten_scalars(Tensor & data) {
@@ -252,17 +261,6 @@ static bool computes_grad_tmpl(T tensors) {
 
 using TensorRef = std::reference_wrapper<const Tensor>;
 using TensorRefList = std::initializer_list<TensorRef>;
-
-// ArrayRef is not covariant, which means there is no
-// implicit conversion between TensorList (aka ArrayRef<Tensor>)
-// and ArrayRef<Variable>.  What we do instead is manually
-// construct a variable_list, which itself is implicitly convertible
-// into an ArrayRef<Variable> (but don't return an ArrayRef<Variable>;
-// ArrayRef is non-owning!)
-static variable_list cast_tensor_list(const TensorList& tensors) {
-  // TODO: Eliminate the intermediate vector allocation
-  return variable_list(tensors.begin(), tensors.end());
-}
 
 static bool compute_requires_grad(const TensorRefList& tensors) {
   return computes_grad_tmpl(tensors);
@@ -298,42 +296,63 @@ static void check_inplace(const Tensor& tensor) {
   }
 }
 
-static void rebase_history(Variable& var, std::shared_ptr<Function> grad_fn, int output_nr=0) {
-  if (!var.defined()) {
-    return;
-  }
-  if (grad_fn) {
+static void throw_error_out_requires_grad(const char* name) {
+  at::runtime_error(
+      "%s(): functions with out=... arguments don't support automatic differentiation, "
+      "but one of the arguments requires grad.", name);
+}
+
+static void rebase_history(Tensor& tensor, std::shared_ptr<Function> grad_fn) {
+  if (grad_fn && tensor.defined()) {
+    auto& var = static_cast<Variable&>(tensor);
     grad_fn->num_inputs = 1;
-    var.rebase_history(output_nr, std::move(grad_fn));
+    var.rebase_history(0, std::move(grad_fn));
+  }
+}
+
+static void rebase_history(TensorList tensors, std::shared_ptr<Function> grad_fn) {
+  if (grad_fn) {
+    grad_fn->num_inputs = tensors.size();
+    int output_nr = 0;
+    for (auto& tensor : tensors) {
+      if (tensor.defined()) {
+        auto& var = static_cast<Variable&>(const_cast<Tensor&>(tensor));
+        var.rebase_history(output_nr, grad_fn);
+        output_nr++;
+      }
+    }
   }
 }
 
 // var must be the only differentiable output of the function. Use the ArrayRef
 // overload for functions with multiple differentiable outputs.
-static void set_history(Variable& var, std::shared_ptr<Function> grad_fn, int output_nr=0) {
-  if (grad_fn) {
+static void set_history(Tensor& tensor, std::shared_ptr<Function> grad_fn) {
+  if (grad_fn && tensor.defined()) {
+    auto& var = static_cast<Variable&>(tensor);
     grad_fn->num_inputs = 1;
-    var.get()->output_nr = output_nr;
+    var.get()->output_nr = 0;
     var.get()->_grad_fn = std::move(grad_fn);
   }
 }
 
-static void set_history(at::ArrayRef<Variable> vl, std::shared_ptr<Function> grad_fn) {
+static void set_history(TensorList tensors, std::shared_ptr<Function> grad_fn) {
   if (grad_fn) {
-    grad_fn->num_inputs = vl.size();
+    grad_fn->num_inputs = tensors.size();
     int64_t output_nr = 0;
-    for (auto& var : vl) {
-      if (!var.defined()) continue;
-      // TODO: combine this with the Variable construction
-      var.get()->output_nr = output_nr;
-      var.get()->_grad_fn = grad_fn;
-      output_nr++;
+    for (auto& tensor : tensors) {
+      if (tensor.defined()) {
+        auto& var = static_cast<Variable&>(const_cast<Tensor&>(tensor));
+        var.get()->output_nr = output_nr;
+        var.get()->_grad_fn = grad_fn;
+        output_nr++;
+      }
     }
   }
 }
 
-static variable_list flatten(const TensorList& tensors) {
-  return cast_tensor_list(tensors);
+static at::ArrayRef<Variable> flatten(TensorList tensors) {
+  auto data = static_cast<const Variable*>(tensors.data());
+  return at::ArrayRef<Variable>(data, tensors.size());
 }
 
 static variable_list flatten(const Tensor& x, const TensorList& y) {
@@ -344,21 +363,13 @@ static variable_list flatten(const Tensor& x, const TensorList& y) {
   return r;
 }
 
-static variable_list flatten(const Tensor& x, const TensorList& y, const Tensor& z) {
+static variable_list flatten(const Tensor& x, TensorList y, const Tensor& z) {
   std::vector<Variable> r;
   r.reserve(2 + y.size());
   r.emplace_back(x);
   r.insert(r.end(), y.begin(), y.end());
   r.emplace_back(z);
   return r;
-}
-
-static std::vector<Tensor> as_tensor_list(std::vector<Variable> &vars) {
-  std::vector<Tensor> tensors;
-  for (auto& v : vars) {
-    tensors.emplace_back(std::move(v));
-  }
-  return tensors;
 }
 
 static void increment_version(const Tensor & t) {
@@ -388,7 +399,7 @@ Tensor & VariableType::s_copy_(Tensor & self, const Tensor & src, bool async) co
   }
   baseType->s_copy_(self_, src_, async);
   increment_version(self);
-  rebase_history(static_cast<Variable&>(self), std::move(grad_fn));
+  rebase_history(self, std::move(grad_fn));
   return self;
 }
 

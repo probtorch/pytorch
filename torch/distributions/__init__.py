@@ -32,22 +32,29 @@ policy, the code for implementing REINFORCE would be as follows::
 
 from .bernoulli import Bernoulli
 from .beta import Beta
+from .binomial import Binomial
 from .categorical import Categorical
 from .cauchy import Cauchy
+from .chi2 import Chi2
 from .dirichlet import Dirichlet
 from .distribution import Distribution
 from .exponential import Exponential
 from .gamma import Gamma
-from .chi2 import Chi2
+from .gumbel import Gumbel
+from .kl import kl_divergence, register_kl
 from .laplace import Laplace
+from .multinomial import Multinomial
 from .multivariate_normal import MultivariateNormal
 from .normal import Normal
 from .one_hot_categorical import OneHotCategorical
+from .pareto import Pareto
+from .studentT import StudentT
 from .uniform import Uniform
 
 __all__ = [
     'Bernoulli',
     'Beta',
+    'Binomial',
     'Categorical',
     'Cauchy',
     'Chi2',
@@ -55,9 +62,15 @@ __all__ = [
     'Distribution',
     'Exponential',
     'Gamma',
+    'Gumbel',
     'Laplace',
+    'Multinomial',
     'MultivariateNormal',
     'Normal',
     'OneHotCategorical',
+    'Pareto',
+    'StudentT',
     'Uniform',
+    'kl_divergence',
+    'register_kl',
 ]

@@ -42,7 +42,7 @@ Tensor narrow(const Tensor& self, int64_t dim, int64_t start, int64_t length) {
   if (length <= 0 || start > cur_size - length) {
     runtime_error("length out of range");
   }
-  return at::native::slice(self, start, start + length, 1, dim);
+  return at::native::slice(self, dim, start, start + length, 1);
 }
 
 Tensor permute(const Tensor& self, IntList dims) {
@@ -89,7 +89,7 @@ Tensor select(const Tensor& self, int64_t dim, int64_t index) {
   return self.as_strided(sizes, strides, storage_offset);
 }
 
-Tensor slice(const Tensor& self, int64_t start, int64_t end, int64_t step, int64_t dim) {
+Tensor slice(const Tensor& self, int64_t dim, int64_t start, int64_t end, int64_t step) {
   int64_t ndim = self.dim();
   AT_ASSERT(ndim > 0, "slice() cannot be applied to a 0-dim tensor.");
   dim = maybe_wrap_dim(dim, ndim);
@@ -198,9 +198,10 @@ Tensor squeeze(const Tensor& self) {
 }
 
 Tensor squeeze(const Tensor& self, int64_t dim) {
-  dim = maybe_wrap_dim(dim, self.dim());
+  int64_t dims = self.dim();
+  dim = maybe_wrap_dim(dim, dims);
 
-  if (self.sizes()[dim] != 1) {
+  if (dims == 0 || self.sizes()[dim] != 1) {
     return self.as_strided(self.sizes().vec(), self.strides().vec());
   }
   auto g = inferSqueezeGeometry(self, dim);
@@ -213,9 +214,10 @@ Tensor & squeeze_(Tensor& self) {
 }
 
 Tensor & squeeze_(Tensor& self, int64_t dim) {
+  int64_t dims = self.dim();
   dim = maybe_wrap_dim(dim, self.dim());
 
-  if (self.sizes()[dim] != 1) {
+  if (dims == 0 || self.sizes()[dim] != 1) {
     return self.as_strided_(self.sizes().vec(), self.strides().vec());
   }
   auto g = inferSqueezeGeometry(self, dim);
@@ -234,6 +236,11 @@ Tensor & unsqueeze_(Tensor& self, int64_t dim) {
 
   auto g = inferUnsqueezeGeometry(self, dim);
   return self.as_strided_(std::get<0>(g), std::get<1>(g));
+}
+
+
+Tensor view_as(const Tensor& self, const Tensor& other) {
+  return self.view(other.sizes());
 }
 
 }

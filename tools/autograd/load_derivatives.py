@@ -8,27 +8,35 @@ import copy
 import re
 import yaml
 from .utils import YamlLoader
-from .gen_variable_type import IDENT_REGEX, split_name_params
+from .utils import IDENT_REGEX, split_name_params
 
 
-def load_derivatives(path, declarations_by_signature, declarations_by_name):
+def load_derivatives(path, declarations):
     with open(path, 'r') as f:
         definitions = yaml.load(f, Loader=YamlLoader)
 
+    declarations_by_signature = defaultdict(list)
+    for declaration in declarations:
+        declarations_by_signature[get_signature(declaration)].append(declaration)
+
     autograd_functions = [
-        process_definition(defn, declarations_by_signature, declarations_by_name)
+        process_definition(defn, declarations_by_signature)
         for defn in definitions]
     ensure_unique_names(autograd_functions)
+    match_declarations_with_autograd_functions(declarations, autograd_functions)
+
     return autograd_functions
 
 
-def create_autograd_function(name, derivatives, num_inputs, buffers=None):
+def create_autograd_function(name, derivatives, num_inputs, signature):
+    op = to_camel_case(name) + 'Backward'
+    op = op.replace('ForwardBackward', 'Backward')
     return {
         'name': name,
-        'op': to_camel_case(name) + 'Backward',
+        'op': op,
         'num_inputs': num_inputs,
+        'signature': signature,
         'derivatives': derivatives,
-        'buffers': [] if buffers is None else buffers,
         'saved_inputs': all_saved_variables(derivatives, 'saved_inputs'),
         'saved_outputs': all_saved_variables(derivatives, 'saved_outputs'),
     }
@@ -48,6 +56,14 @@ def create_derivative(declaration, formula, output_indices, var_names):
     formula, saved_inputs = saved_variables(formula, arguments)
     formula, saved_outputs = saved_variables(formula, returns)
 
+    # Check that the referenced gradients in the formula are in bounds
+    for i in used_gradient_indices(formula):
+        if i >= len(declaration['returns']):
+            raise RuntimeError(
+                "Out of bounds grads access: derivative formula for {} "
+                "used grads[{}], but the forward only returns {} outputs."
+                .format(declaration['name'], i, len(declaration['returns'])))
+
     return {
         'formula': formula,
         'output_indices': output_indices,
@@ -57,7 +73,7 @@ def create_derivative(declaration, formula, output_indices, var_names):
     }
 
 
-def process_definition(defn, declarations_by_signature, declarations_by_name):
+def process_definition(defn, declarations_by_signature):
     """Processes a single entry `defn` in derivatives.yaml"""
 
     def canonical_declaration(declarations, name):
@@ -76,7 +92,61 @@ def process_definition(defn, declarations_by_signature, declarations_by_name):
         """Return the index of the first element of xs matching pred."""
         return next((i, x) for i, x in enumerate(xs) if pred(x))
 
-    def set_up_derivatives(defn, declaration):
+    def check_grad_usage(defn_name, declaration, derivatives):
+        """
+        Check for some subtle mistakes one might make when writing gradients.
+        These mistakes will compile, but will be latent until a function is
+        used with double backwards.
+        """
+
+        used_grad = 0
+        used_grads = 0
+        fully_implemented = True
+        used_grads_indices = []
+        for d in derivatives:
+            formula = d['formula']
+            used_grad += len(re.findall(IDENT_REGEX.format('grad'), formula))
+            used_grads += len(re.findall(IDENT_REGEX.format('grads'), formula))
+            fully_implemented = \
+                fully_implemented and \
+                not re.search(IDENT_REGEX.format('not_implemented'), formula)
+            used_grads_indices.extend(used_gradient_indices(formula))
+        assert used_grads >= len(used_grads_indices)
+        only_used_grads_indices = used_grads == len(used_grads_indices)
+
+        if used_grad and used_grads:
+            raise RuntimeError("Derivative definition of {} in derivatives.yaml illegally "
+                               "mixes use of 'grad' and 'grads'. Consider replacing "
+                               "occurrences of 'grad' with 'grads[0]'".format(defn_name))
+
+        if only_used_grads_indices and set(used_grads_indices) == {0}:
+            raise RuntimeError("Derivative definition of {} in derivatives.yaml solely "
+                               "refers to 'grads[0]'.  If the first output is indeed the "
+                               "only differentiable output, replace 'grads[0]' with 'grad'; "
+                               "otherwise, there is a likely error in your derivatives "
+                               "declaration.".format(defn_name))
+
+        # DO NOT comment out this test!  Code generation will probably work with
+        # this test commented out, but if you ever pass a non-differentiable
+        # argument to an autograd function (e.g., a backwards function which
+        # has double backwards implemented, as was the case in #4422) your code
+        # will fail when you ever actually try to differentiate with it.
+        #
+        # NB: I had to make it not complain if both 'grads' and 'grad' are never
+        # used, because we have some silly zeros_like() gradients for inplace
+        # comparison tests.
+        if fully_implemented and not used_grad and used_grads and only_used_grads_indices and \
+           set(used_grads_indices) != set(range(len(declaration['returns']))):
+            raise RuntimeError("Derivative definition of {} in derivatives.yaml does "
+                               "not refer to the gradients of all of its outputs.  Either "
+                               "the derivatives declaration is wrong, OR you have some "
+                               "non-differentiable outputs.  If you have a single "
+                               "differentiable output, make it the first output in ATen "
+                               "and reference its gradient with 'grad'; otherwise, you "
+                               "have hit a case which is unsupported by the codegen, "
+                               "see #4567.".format(defn_name))
+
+    def set_up_derivatives(defn_name, defn, declaration):
         # First, let us determine the set of inputs for which gradients
         # were specified in declarations.  We'll use this in layout
         # computation.
@@ -113,41 +183,10 @@ def process_definition(defn, declarations_by_signature, declarations_by_name):
                 args.append(name)
             derivatives.append(create_derivative(declaration, formula, output_indices, args))
 
+        # Test to see if the use of 'grads' makes sense.
+        check_grad_usage(defn_name, declaration, derivatives)
+
         return derivatives, num_inputs
-
-    def is_nn_fwd(defn_name, declarations_by_name):
-        """Return True if the definition is of an NN, non-double
-           backward function, False otherwise"""
-
-        if len(declarations_by_name[defn_name]) == 0:
-            return False
-        declaration = declarations_by_name[defn_name][0]
-        base_name = defn_name if not declaration['inplace'] else defn_name[:-1]
-        fwd_name = base_name + '_forward'
-        if declaration['mode'] != 'NN' or fwd_name not in declarations_by_name:
-            return False
-        return True
-
-    def preprocess_nn_function(defn_name, declarations_by_name):
-        """Set up declaration and derivative information for NN,
-           non-double backward functions"""
-
-        declaration = declarations_by_name[defn_name][0]
-        base_name = defn_name if not declaration['inplace'] else defn_name[:-1]
-        fwd_name = base_name + ('_forward' if not declaration['inplace'] else '_forward_')
-
-        assert len(declarations_by_name[fwd_name]) == 1
-
-        declaration['base_name'] = fwd_name
-        fwd = declarations_by_name[fwd_name][0]
-
-        derivatives, num_inputs = set_up_derivatives(defn, fwd)
-        buffers = declaration['buffers']
-
-        func = create_autograd_function(defn_name, derivatives, num_inputs, buffers)
-        declaration['derivative'] = func
-
-        return func
 
     def unzip(xs):
         return zip(*xs)
@@ -161,9 +200,6 @@ def process_definition(defn, declarations_by_signature, declarations_by_name):
                            "Please use a different name in Declarations.cwrap."
                            .format(defn_name))
     signature = '{}({})'.format(defn_name, ', '.join(param_types))
-
-    if is_nn_fwd(defn_name, declarations_by_name):
-        return preprocess_nn_function(defn_name, declarations_by_name)
 
     declarations = declarations_by_signature[signature]
     if len(declarations) == 0:
@@ -189,13 +225,8 @@ def process_definition(defn, declarations_by_signature, declarations_by_name):
                                'Declarations.yaml ({})'
                                .format(i, defn_name, x, y))
 
-    derivatives, num_inputs = set_up_derivatives(defn, canonical)
-    buffers = canonical.get('buffers')
-
-    func = create_autograd_function(defn_name, derivatives, num_inputs, buffers)
-    for declaration in declarations:
-        declaration['derivative'] = func
-    return func
+    derivatives, num_inputs = set_up_derivatives(defn_name, defn, canonical)
+    return create_autograd_function(defn_name, derivatives, num_inputs, signature)
 
 
 def ensure_unique_names(autograd_functions):
@@ -212,6 +243,33 @@ def ensure_unique_names(autograd_functions):
         if len(overloads) > 1:
             for i, func in enumerate(overloads):
                 func['op'] += str(i)
+
+
+def get_signature(declaration, use_base_variant=False):
+    name = declaration['name']
+    arguments = declaration['arguments']
+    if use_base_variant:
+        if declaration['inplace']:
+            assert name.endswith('_')
+            name = name[:-1]
+        elif name.endswith('_out'):
+            name = name[:-4]
+            arguments = [arg for arg in arguments if not arg.get('output', False)]
+    simple_types = [arg['simple_type'] for arg in arguments]
+    return '{}({})'.format(name, ', '.join(simple_types))
+
+
+GRAD_INDEX_REGEX = r'(?:^|\W)grads\[(\d+)\]'
+
+
+def used_gradient_indices(formula):
+    """Determine a list of gradient indices (the i in grads[i]) that
+    are used by the formula.
+
+    >>> used_gradient_indices("foo(grads[0], grads[1])")
+    [0, 1]
+    """
+    return [int(i) for i in re.findall(GRAD_INDEX_REGEX, formula)]
 
 
 def saved_variables(formula, args):
@@ -296,3 +354,26 @@ def all_saved_variables(derivatives, key):
 
 def to_camel_case(name):
     return ''.join([p.title() for p in name.split('_')])
+
+
+def match_declarations_with_autograd_functions(declarations, autograd_functions):
+    """Sets the "derivative" key on declarations to matching autograd functions
+
+    In-place functions will use the out-of-place derivative definition if there
+    is no in-place specific derivative.
+    """
+
+    functions_by_signature = {f['signature']: f for f in autograd_functions}
+
+    def find_function(declaration):
+        signature = get_signature(declaration)
+        if signature in functions_by_signature:
+            return functions_by_signature[signature]
+
+        # if there is no exact match look for the out-of-place signature.
+        # i.e mul() for mul_() or mul_out()
+        signature = get_signature(declaration, use_base_variant=True)
+        return functions_by_signature.get(signature)
+
+    for declaration in declarations:
+        declaration['derivative'] = find_function(declaration)

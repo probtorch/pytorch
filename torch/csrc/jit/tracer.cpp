@@ -61,27 +61,40 @@ struct TraceEval : autograd::Eval {
 
   virtual variable_list apply(const variable_list& inputs) override {
     auto should_trace = !flag.test_and_set();
-    if (should_trace) enterTrace(inputs);
-    auto outputs = Eval::apply(inputs);
-    if (should_trace) exitTrace(inputs, outputs);
+    if (!should_trace) {
+      return Eval::apply(inputs);
+    }
+    variable_list local_inputs = inputs;
+    enterTrace(local_inputs);
+    auto outputs = Eval::apply(local_inputs);
+    exitTrace(local_inputs, outputs);
     return outputs;
   }
 
-  void enterTrace(const variable_list& inputs) {
+  void enterTrace(variable_list& inputs) {
     auto tracing_state = weak_tracing_state.lock();
     if (!tracing_state) return;
 
     auto& graph = tracing_state->graph;
-    tracing_state->active = true;
     graph->advanceStage();
 
-    for (auto & input : inputs) {
+    for (std::size_t i = 0, num_inputs = inputs.size(); i < num_inputs; ++i) {
+      auto input = inputs[i];
       Value *input_node = graph->addInput();
       if (!input.defined()) continue;
-      JIT_ASSERT(!detail::getValueState(tracing_state, input, false));
+      auto * value_state = detail::getValueState(tracing_state, input, false);
+      if (value_state) {
+        // Note [Repeated inputs]
+        // Repeated inputs cause us some problems in here, because there's no way
+        // for us to attach a single Variable to two inputs, and to tell which one
+        // is used when performing an operation. To deal with it, we allocate a view
+        // of such input, and use that instead.
+        inputs[i] = input = input.view(input.sizes());
+      }
       setValueTrace(tracing_state, input, input_node);
       input_node->inferTypeFrom(input.data());
     }
+    tracing_state->active = true;
     tracing_state->var_flags.at(graph->stage()).first = detail::getVarFlags(inputs);
   }
 
@@ -124,7 +137,7 @@ Node* recordTrace(std::string op, // TODO: make this a Symbol
   // haven't actually specified what the locking contract is, be conservative.
   auto state_lock = state->lock();
 
-  Node *n = graph->create(stringToSymbol(op), 0 /* initial outputs */);
+  Node *n = graph->create(Symbol(op), 0 /* initial outputs */);
   auto sl = std::make_shared<SourceLocation>(getPythonInterpreterStackTrace());
   n->setSourceLocation(sl);
 

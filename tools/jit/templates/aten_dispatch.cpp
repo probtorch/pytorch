@@ -94,6 +94,13 @@ void pack_list(list_of_retainable & outputs, std::tuple<Tensor, Tensor, Tensor, 
   outputs.push_back(toRetainableSteal(std::move(std::get<3>(v))));
 }
 
+int deviceForInputs(const list_of_retainable & inputs) {
+  if(inputs.size() == 0)
+    return -1;
+  auto t = TensorTemporary(inputs[0]);
+  return t.value().type().is_cuda() ? (int) t.value().get_device() : -1;
+}
+
 // A list of functions taking TensorList arguments (where we can't use
 // the number of inputs to choose an overload).
 std::unordered_set<Symbol> tensor_vararg_fns = {
@@ -114,12 +121,12 @@ std::unordered_map<std::string, operator_constructor> constructors = {
 
 std::string getDescriptor(jit::Node* n) {
   std::stringstream s;
-  s << symbolToString(n->kind());
+  s << n->kind().toString();
   if (tensor_vararg_fns.count(n->kind()) == 0)
     s << "-" << n->inputs().size();
   else
     s << "-*";
-  std::vector<const char*> attr_names = fmap(n->attributeNames(), &symbolToString);
+  std::vector<const char*> attr_names = fmap(n->attributeNames(), [](Symbol x) { return x.toString(); });
   std::sort(attr_names.begin(), attr_names.end(), [](const char *a, const char *b) {
     return std::strcmp(a, b) < 0;
   });

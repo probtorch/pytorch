@@ -57,7 +57,7 @@ static Tensor dispatch_clamp_max(const Tensor & self, Scalar max) {
   return self.clamp_max(max);
 }
 
-PyObject * THPVariable_clamp(PyObject* self, PyObject* args, PyObject* kwargs)
+static PyObject * THPVariable_clamp(PyObject* self, PyObject* args, PyObject* kwargs)
 {
   HANDLE_TH_ERRORS
   static PythonArgParser parser({
@@ -94,7 +94,7 @@ static Tensor & dispatch_clamp_max_(Tensor & self, Scalar max) {
   return self.clamp_max_(max);
 }
 
-PyObject * THPVariable_clamp_(PyObject* self, PyObject* args, PyObject* kwargs)
+static PyObject * THPVariable_clamp_(PyObject* self, PyObject* args, PyObject* kwargs)
 {
   HANDLE_TH_ERRORS
   static PythonArgParser parser({
@@ -204,14 +204,6 @@ static PyObject * THPVariable_copy_(PyObject* self, PyObject* args, PyObject* kw
   PyObject* parsed_args[2];
   auto r = parser.parse(args, kwargs, parsed_args);
   return THPVariable_Wrap(dispatch_copy_(self_, r.tensor(0), r.toBool(1)));
-  END_HANDLE_TH_ERRORS
-}
-
-static PyObject * THPVariable_from_numpy(PyObject* module, PyObject* arg)
-{
-  HANDLE_TH_ERRORS
-  auto data = torch::utils::tensor_from_numpy(arg);
-  return THPVariable_Wrap(make_variable(std::move(data)));
   END_HANDLE_TH_ERRORS
 }
 
@@ -496,6 +488,32 @@ static PyObject * THPVariable_type(PyObject* self, PyObject* args, PyObject* kwa
   END_HANDLE_TH_ERRORS
 }
 
+// FixMe: remove when scalars fully supported
+inline PyObject* _wrap_scalar(at::Tensor tensor) {
+  if (!tensor.sizes().equals({1})) {
+    throw std::runtime_error("tried to wrap scalar of non-scalar size");
+  }
+  auto v = Variable(std::move(tensor));
+  v.data().squeeze_();
+  return THPVariable_Wrap(v, true);
+}
+
+static PyObject * THPVariable__scalar_sum(PyObject* self, PyObject* args, PyObject* kwargs)
+{
+  HANDLE_TH_ERRORS
+  static PythonArgParser parser({
+    "sum()",
+  });
+  auto& self_ = reinterpret_cast<THPVariable*>(self)->cdata;
+  PyObject* parsed_args[3];
+  auto r = parser.parse(args, kwargs, parsed_args);
+  if (r.idx == 0) {
+    return _wrap_scalar(dispatch_sum(self_));
+  }
+  Py_RETURN_NONE;
+  END_HANDLE_TH_ERRORS
+}
+
 // generated methods start here
 
 ${py_methods}
@@ -535,7 +553,6 @@ PyMethodDef variable_methods[] = {
   {"double", (PyCFunction)THPVariable_double, METH_NOARGS, NULL},
   {"element_size", (PyCFunction)THPVariable_element_size, METH_NOARGS, NULL},
   {"float", (PyCFunction)THPVariable_float, METH_NOARGS, NULL},
-  {"from_numpy", (PyCFunction)THPVariable_from_numpy, METH_STATIC | METH_O, NULL},
   {"half", (PyCFunction)THPVariable_half, METH_NOARGS, NULL},
   {"int", (PyCFunction)THPVariable_int, METH_NOARGS, NULL},
   {"long", (PyCFunction)THPVariable_long, METH_NOARGS, NULL},
@@ -552,6 +569,7 @@ PyMethodDef variable_methods[] = {
   {"stride", (PyCFunction)THPVariable_stride, METH_VARARGS | METH_KEYWORDS, NULL},
   {"tolist", (PyCFunction)THPVariable_tolist, METH_NOARGS, NULL},
   {"type", (PyCFunction)THPVariable_type, METH_VARARGS | METH_KEYWORDS, NULL},
+  {"_scalar_sum", (PyCFunction)THPVariable__scalar_sum,  METH_VARARGS | METH_KEYWORDS, NULL},
   ${py_method_defs}
   {NULL}
 };

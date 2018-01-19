@@ -86,7 +86,6 @@ void ToONNX(std::shared_ptr<tracer::TracingState>& state, bool aten) {
         // Copy over source location information to all nodes created by
         // the symbolic
         outputs[i]->node()->setSourceLocation(node->getSourceLocation());
-        outputs[i]->node()->setScope(node->scope());
         env[old] = outputs[i];
       } else {
         // Null output means that the ONNX op doesn't have outputs corresponding
@@ -151,9 +150,11 @@ void ToONNX(std::shared_ptr<tracer::TracingState>& state, bool aten) {
         py_inputs[input_nr++] = py::cast(envFn(input));
     }
 
+    auto scope_guard = ctx.graph->set_current_scope_temporary(n->scope());
+
     py::object raw_output = onnx.attr("_run_symbolic_function")(ctx.graph, n, py_inputs, aten);
 
-    processSymbolicOutput(symbolToString(n->kind()), n, raw_output);
+    processSymbolicOutput(n->kind().toString(), n, raw_output);
   };
 
   auto callPySymbolicMethod = [&](PythonOp* op) {
@@ -187,6 +188,8 @@ void ToONNX(std::shared_ptr<tracer::TracingState>& state, bool aten) {
       py_symbolic_args[input_nr++] = obj;
     }
 
+    auto scope_guard = ctx.graph->set_current_scope_temporary(op->scope());
+
     // Call the symbolic function
     // Use a little trampoline function so we can give good error messages
     // upon argument mismatch
@@ -207,15 +210,7 @@ void ToONNX(std::shared_ptr<tracer::TracingState>& state, bool aten) {
     // Needed so that symbolic calls create nodes with correct stages.
     auto stage_guard = new_graph->setStageTemporary(node->stage());
     IR_IFM(node, CppOp)
-      if (auto fn = std::dynamic_pointer_cast<autograd::HasSymbolic>(value->fn)) {
-        auto outputs = fn->symbolic(&ctx, fmap(node->inputs(), envFn), node->getSourceLocation());
-        for (auto& el: outputs) {
-          el->node()->setScope(node->scope());
-        }
-        setOutputs(value->name(), node, outputs);
-      } else {
-        cloneNode(node);
-      }
+      cloneNode(node);
     IR_ELSEIFM(PythonOp)
       callPySymbolicMethod(value);
     IR_ELSE()
