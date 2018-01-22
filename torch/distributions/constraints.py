@@ -14,6 +14,7 @@ __all__ = [
     'lower_triangular',
     'nonnegative_integer',
     'positive',
+    'positive_definite',
     'positive_integer',
     'real',
     'simplex',
@@ -165,7 +166,15 @@ class _LowerTriangular(Constraint):
     Constrain to lower-triangular square matrices.
     """
     def check(self, value):
-        return (torch.tril(value) == value).min(-1).min(-1)
+        return (torch.tril(value) == value).min(-1)[0].min(-1)[0]
+
+
+class _PositiveDefinite(Constraint):
+    """
+    Constrain to positive-definite matrices.
+    """
+    def check(self, value):
+        return (torch.symeig(value)[0] > 0.0)
 
 
 # Public interface.
@@ -183,3 +192,4 @@ unit_interval = _Interval(0, 1)
 interval = _Interval
 simplex = _Simplex()
 lower_triangular = _LowerTriangular()
+positive_definite = _PositiveDefinite()
