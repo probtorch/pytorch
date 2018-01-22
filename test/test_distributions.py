@@ -163,6 +163,20 @@ EXAMPLES = [
             'scale': torch.Tensor([1e-5, 1e-5]),
         },
     ]),
+    Example(MultivariateNormal, [
+        {
+            'loc': Variable(torch.randn(5, 2), requires_grad=True),
+            'covariance_matrix': Variable(torch.Tensor([[2.0, 0.3],[0.3, 0.25]]), requires_grad=True),
+        },
+        {
+            'loc': Variable(torch.randn(2), requires_grad=True),
+            'scale_tril': Variable(torch.Tensor([[2.0, 0.0],[-0.5, 0.25]]), requires_grad=True),
+        },
+        {
+            'loc': torch.Tensor([1.0, -1.0]),
+            'covariance_matrix': torch.Tensor([[5.0, -0.5],[-0.5, 1.5]]),
+        },
+    ]),
     Example(Normal, [
         {
             'loc': Variable(torch.randn(5, 5), requires_grad=True),
@@ -656,7 +670,12 @@ class TestDistributions(TestCase):
         self.assertEqual(MultivariateNormal(mean_multi_batch, cov).sample((2,7)).size(), (2, 7, 6, 5, 3))
         self.assertEqual(MultivariateNormal(mean, scale_tril=scale_tril).sample((2,7)).size(), (2, 7, 5, 3))
 
-        # check these also work for Tensors, not just variables
+        # check gradients
+        self._gradcheck_log_prob(MultivariateNormal, (mean, cov))
+        self._gradcheck_log_prob(MultivariateNormal, (mean_multi_batch, cov))
+        self._gradcheck_log_prob(MultivariateNormal, (mean, None, scale_tril))
+
+        # check these also work for tensors, not just variables
         mean = mean.data
         mean_no_batch = mean_no_batch.data
         mean_multi_batch = mean_multi_batch.data
@@ -679,10 +698,8 @@ class TestDistributions(TestCase):
         cov = Variable(torch.matmul(tmp, tmp.t())/tmp.shape[-1], requires_grad=True)
         scale_tril = Variable(torch.potrf(cov.data, upper=False), requires_grad=True)
 
-        # TODO these are failing at the moment due to shape issues... the helper seems to ignore event_shape
-        #self._gradcheck_log_prob(MultivariateNormal, (mean, cov))
-        #self._gradcheck_log_prob(MultivariateNormal, (mean, None, scale_tril))
-
+        # check that logprob values match scipy logpdf,
+        # and that covariance and scale_tril parameters are equivalent
         dist1 = MultivariateNormal(mean, cov)
         dist2 = MultivariateNormal(mean, scale_tril=scale_tril)
         ref_dist = scipy.stats.multivariate_normal(mean.data.numpy(), cov.data.numpy())
@@ -692,8 +709,6 @@ class TestDistributions(TestCase):
 
         self.assertAlmostEqual(0.0, np.mean((dist1.log_prob(x).data.numpy() - expected)**2), places=3)
         self.assertAlmostEqual(0.0, np.mean((dist2.log_prob(x).data.numpy() - expected)**2), places=3)
-
-
 
     def test_exponential(self):
         rate = Variable(torch.randn(5, 5).abs(), requires_grad=True)
