@@ -5,7 +5,7 @@ import torch
 from torch.autograd import Variable
 from torch.distributions import constraints
 from torch.distributions.distribution import Distribution
-from torch.distributions.utils import broadcast_all
+from torch.distributions.utils import broadcast_all, lazy_property
 
 class MultivariateNormal(Distribution):
     r"""
@@ -43,28 +43,32 @@ class MultivariateNormal(Distribution):
 
     def __init__(self, loc, covariance_matrix=None, scale_tril=None):
         batch_shape, event_shape = loc.shape[:-1], loc.shape[-1:]
-        if covariance_matrix is not None and scale_tril is not None:
-            raise ValueError("Either covariance matrix or scale_tril may be specified, not both.")
-        if covariance_matrix is None and scale_tril is None:
-            raise ValueError("One of either covariance matrix or scale_tril must be specified")
+        if (covariance_matrix is None) == (scale_tril is None):
+            raise ValueError("Exactly one of covariance_matrix or scale_tril may be specified (but not both).")
         if scale_tril is None:
-            assert covariance_matrix.dim() >= 2
             if covariance_matrix.dim() > 2:
                 # TODO support batch_shape for covariance
-                raise NotImplementedError("batch_shape for covariance matrix is not yet supported")
-            else:
-                scale_tril = torch.potrf(covariance_matrix, upper=False)
+                raise NotImplementedError("batch_shape for covariance_matrix is not yet supported")
+            elif covariance_matrix.dim() < 2:
+                raise ValueError("covariance_matrix must be two-dimensional")
+            self.covariance_matrix = covariance_matrix
         else:
-            assert scale_tril.dim() >= 2
             if scale_tril.dim() > 2:
                 # TODO support batch_shape for scale_tril
                 raise NotImplementedError("batch_shape for scale_tril is not yet supported")
-            else:
-                covariance_matrix = torch.mm(scale_tril, scale_tril.t())
+            elif scale_tril.dim() < 2:
+                raise ValueError("scale_tril matrix must be two-dimensional")
+            self.scale_tril = scale_tril
         self.loc = loc
-        self.covariance_matrix = covariance_matrix
-        self.scale_tril = scale_tril
         super(MultivariateNormal, self).__init__(batch_shape, event_shape)
+
+    @lazy_property
+    def scale_tril(self):
+        return torch.potrf(self.covariance_matrix, upper=False)
+
+    @lazy_property
+    def covariance_matrix(self):
+        return torch.mm(self.scale_tril, self.scale_tril.t())
 
     def rsample(self, sample_shape=torch.Size()):
         shape = self._extended_shape(sample_shape)
