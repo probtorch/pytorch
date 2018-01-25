@@ -165,7 +165,7 @@ class _LowerTriangular(Constraint):
     Constrain to lower-triangular square matrices.
     """
     def check(self, value):
-        return (torch.tril(value) == value).min(-1).min(-1)
+        return (torch.tril(value) == value).min(-1)[0].min(-1)[0]
 
 
 # Public interface.

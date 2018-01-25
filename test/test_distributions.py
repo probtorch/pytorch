@@ -32,7 +32,7 @@ import torch
 from common import TestCase, run_tests, set_rng_seed
 from torch.autograd import Variable, grad, gradcheck, variable
 from torch.distributions import Distribution
-from torch.distributions import (Bernoulli, Beta, Binomial, Categorical, Cauchy, Chi2,
+from torch.distributions import (Bernoulli, Beta, Binomial, BivariateNormal, Categorical, Cauchy, Chi2,
                                  Dirichlet, Exponential, FisherSnedecor, Gamma, Geometric,
                                  Gumbel, Laplace, Normal, OneHotCategorical, Multinomial,
                                  Pareto, Poisson, StudentT, Uniform, kl_divergence)
@@ -92,6 +92,20 @@ EXAMPLES = [
     Example(Binomial, [
         {'probs': Variable(torch.Tensor([[0.1, 0.2, 0.3], [0.5, 0.3, 0.2]]), requires_grad=True), 'total_count': 10},
         {'probs': Variable(torch.Tensor([[1.0, 0.0], [0.0, 1.0]]), requires_grad=True), 'total_count': 10},
+    ]),
+    Example(BivariateNormal, [
+        {
+            'loc': Variable(torch.randn(5, 2), requires_grad=True),
+            'covariance_matrix': Variable(torch.Tensor([[2.0, 0.3],[0.3, 0.25]]), requires_grad=True),
+        },
+        {
+            'loc': Variable(torch.randn(2), requires_grad=True),
+            'scale_tril': Variable(torch.Tensor([[2.0, 0.0],[-0.5, 0.25]]), requires_grad=True),
+        },
+        {
+            'loc': torch.Tensor([1.0, -1.0]),
+            'covariance_matrix': torch.Tensor([[5.0, -0.5],[-0.5, 1.5]]),
+        },
     ]),
     Example(Multinomial, [
         {'probs': Variable(torch.Tensor([[0.1, 0.2, 0.3], [0.5, 0.3, 0.2]]), requires_grad=True), 'total_count': 10},

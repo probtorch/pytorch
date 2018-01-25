@@ -33,6 +33,7 @@ policy, the code for implementing REINFORCE would be as follows::
 from .bernoulli import Bernoulli
 from .beta import Beta
 from .binomial import Binomial
+from .bivariate_normal import BivariateNormal
 from .categorical import Categorical
 from .cauchy import Cauchy
 from .chi2 import Chi2
