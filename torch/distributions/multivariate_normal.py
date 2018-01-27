@@ -35,14 +35,14 @@ class MultivariateNormal(Distribution):
         Only one of `covariance_matrix` or `scale_tril` can be specified.
         
     """
-    params = {'loc': constraints.real,
+    params = {'loc': constraints.real_vector,
               'covariance_matrix': constraints.positive_definite,
-              'scale_tril': constraints.lower_triangular }
+              'scale_tril': constraints.lower_cholesky }
     support = constraints.real
     has_rsample = True
 
     def __init__(self, loc, covariance_matrix=None, scale_tril=None):
-        batch_shape, event_shape = loc.shape[:-1], loc.shape[-1:]
+        batch_shape, event_shape = torch.Size(loc.shape[:-1]), torch.Size(loc.shape[-1:])
         if (covariance_matrix is None) == (scale_tril is None):
             raise ValueError("Exactly one of covariance_matrix or scale_tril may be specified (but not both).")
         if scale_tril is None:

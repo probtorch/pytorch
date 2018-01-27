@@ -11,12 +11,14 @@ __all__ = [
     'interval',
     'is_dependent',
     'less_than',
+    'lower_cholesky',
     'lower_triangular',
     'nonnegative_integer',
     'positive',
     'positive_definite',
     'positive_integer',
     'real',
+    'real_vector',
     'simplex',
     'unit_interval',
 ]
@@ -169,12 +171,31 @@ class _LowerTriangular(Constraint):
         return (torch.tril(value) == value).min(-1)[0].min(-1)[0]
 
 
+class _LowerCholesky(Constraint):
+    """
+    Constrain to lower-triangular square matrices with positive diagonals.
+    """
+    def check(self, value):
+        ind = torch.arange(value.size(-1)).long()
+        return ((torch.tril(value) == value).min(-1)[0].min(-1)[0] & 
+                (value[...,ind,ind] > 0).min(-1)[0])
+
+
 class _PositiveDefinite(Constraint):
     """
     Constrain to positive-definite matrices.
     """
     def check(self, value):
         return (torch.symeig(value)[0] > 0.0)
+
+
+class _RealVector(Constraint):
+    """
+    Constraint to real-valued vectors. This is the same as `constraints.real`, 
+    but additionally reduces across the `event_shape` dimension.
+    """
+    def check(self, value):
+        return (value == value).min(-1)[0]
 
 
 # Public interface.
@@ -185,6 +206,7 @@ nonnegative_integer = _IntegerGreaterThan(0)
 positive_integer = _IntegerGreaterThan(1)
 integer_interval = _IntegerInterval
 real = _Real()
+real_vector = _RealVector()
 positive = _GreaterThan(0)
 greater_than = _GreaterThan
 less_than = _LessThan
@@ -192,4 +214,5 @@ unit_interval = _Interval(0, 1)
 interval = _Interval
 simplex = _Simplex()
 lower_triangular = _LowerTriangular()
+lower_cholesky = _LowerCholesky()
 positive_definite = _PositiveDefinite()
