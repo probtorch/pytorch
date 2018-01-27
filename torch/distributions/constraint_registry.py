@@ -4,10 +4,10 @@ PyTorch provides two :class:`ConstraintRegistry` objects that link
 :class:`~torch.distributions.transforms.Transform` objects:
 
 1. ``biject_to(constraint)`` looks up a bijective
-   :class:`torch.distributions.transforms.Transform` from
+   :class:`~torch.distributions.transforms.Transform` from
    ``constraints.real`` to the given ``constraint``.
 2. ``transform_to(constraint)`` looks up a not-necessarily bijective
-   :class:`torch.distributions.transforms.Transform` from
+   :class:`~torch.distributions.transforms.Transform` from
    ``constraints.real`` to the given ``constraint``.
 
 The ``transform_to`` object is useful for performing unconstrained optimization
