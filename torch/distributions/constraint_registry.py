@@ -136,10 +136,10 @@ transform_to.register(constraints.positive, transforms.ExpTransform())
 @biject_to.register(constraints.greater_than)
 @transform_to.register(constraints.greater_than)
 def _transform_to_greater_than(constraint):
-    loc = -constraint.lower_bound
+    loc = constraint.lower_bound
     scale = loc.new([1]).expand_as(loc)
-    return transforms.ComposeTransform([transforms.AffineTransform(loc, scale),
-                                        transforms.ExpTransform()])
+    return transforms.ComposeTransform([transforms.ExpTransform(),
+                                        transforms.AffineTransform(loc, scale)])
 
 
 @biject_to.register(constraints.less_than)
@@ -147,8 +147,8 @@ def _transform_to_greater_than(constraint):
 def _transform_to_less_than(constraint):
     loc = constraint.upper_bound
     scale = loc.new([-1]).expand_as(loc)
-    return transforms.ComposeTransform([transforms.AffineTransform(loc, scale),
-                                        transforms.ExpTransform()])
+    return transforms.ComposeTransform([transforms.ExpTransform(),
+                                        transforms.AffineTransform(loc, scale)])
 
 
 biject_to.register(constraints.unit_interval, transforms.SigmoidTransform())
@@ -158,11 +158,10 @@ transform_to.register(constraints.unit_interval, transforms.SigmoidTransform())
 @biject_to.register(constraints.interval)
 @transform_to.register(constraints.interval)
 def _transform_to_interval(constraint):
-    span = constraint.upper_bound - constraint.lower_bound
-    loc = -span * constraint.lower_bound
-    scale = span.reciprocal()
-    return transforms.ComposeTransform([transforms.AffineTransform(loc, scale),
-                                        transforms.SigmoidTransform()])
+    loc = constraint.lower_bound
+    scale = constraint.upper_bound - constraint.lower_bound
+    return transforms.ComposeTransform([transforms.SigmoidTransform(),
+                                        transforms.AffineTransform(loc, scale)])
 
 
 biject_to.register(constraints.simplex, transforms.StickBreakingTransform())

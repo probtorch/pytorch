@@ -168,6 +168,10 @@ class ComposeTransform(Transform):
         return self.parts == other.parts
 
     @lazy_property
+    def bijective(self):
+        return all(p.bijective for p in self.parts)
+
+    @lazy_property
     def inv(self):
         inv = ComposeTransform([p.inv for p in reversed(self.parts)])
         inv.inv = self
