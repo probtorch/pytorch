@@ -1,36 +1,68 @@
 r"""
-PyTorch provides two :class:`ConstraintRegistry` objects that link
+PyTorch provides two global :class:`ConstraintRegistry` objects that link
 :class:`~torch.distributions.constraints.Constraint` objects to
-:class:`~torch.distributions.transforms.Transform` objects:
+:class:`~torch.distributions.transforms.Transform` objects. These objects both
+input constraints and return transforms, but they have different guarantees on
+bijectivity.
 
 1. ``biject_to(constraint)`` looks up a bijective
-   :class:`~torch.distributions.transforms.Transform` from
-   ``constraints.real`` to the given ``constraint``.
+   :class:`~torch.distributions.transforms.Transform` from ``constraints.real``
+   to the given ``constraint``. The returned transform is guaranteed to have
+   ``.bijective = True`` and should implement ``.log_abs_det_jacobian()``.
 2. ``transform_to(constraint)`` looks up a not-necessarily bijective
-   :class:`~torch.distributions.transforms.Transform` from
-   ``constraints.real`` to the given ``constraint``.
+   :class:`~torch.distributions.transforms.Transform` from ``constraints.real``
+   to the given ``constraint``. The returned transform is not guaranteed to
+   implement ``.log_abs_det_jacobian()``.
 
-The ``transform_to`` object is useful for performing unconstrained optimization
-on constrained parameters of probability distributions, which are indicated by
-each distribution's ``.params`` dict::
+The ``transform_to()`` registry is useful for performing unconstrained
+optimization on constrained parameters of probability distributions, which are
+indicated by each distribution's ``.params`` dict. These transforms often
+overparameterize a space in order to avoid rotation; they are thus more
+suitable for coordinate-wise optimization algorithms like Adam::
 
     loc = Variable(torch.zeros(100), requires_grad=True)
     unconstrained = Variable(torch.zeros(100), requires_grad=True)
     scale = transform_to(Normal.params['scale'])(unconstrained)
     loss = -Normal(loc, scale).log_prob(data).sum()
 
-The ``biject_to`` object is useful for Hamiltonian Monte Carlo, where samples
-from a probability distribution with constrained ``.support`` are propagated in
-an unconstrained space::
+The ``biject_to()`` registry is useful for Hamiltonian Monte Carlo, where
+samples from a probability distribution with constrained ``.support`` are
+propagated in an unconstrained space, and algorithms are typically rotation
+invariant.::
 
     dist = Exponential(rate)
     unconstrained = Variable(torch.zeros(100), requires_grad=True)
     sample = biject_to(dist.support)(unconstrained)
     potential_energy = -dist.log_prob(sample).sum()
 
+.. note::
+
+    An example where ``transform_to`` and ``biject_to`` differ is
+    ``constraints.simplex``: ``transform_to(constraints.simplex)`` returns a
+    :class:`~torch.distributions.transforms.BoltzmannTransform` that simply
+    exponentiates and normalizes its inputs; this is a cheap and mostly
+    coordinate-wise operation appropriate for algorithms like SVI. In
+    contrast, ``biject_to(constraints.simplex)`` returns a
+    :class:`~torch.distributions.transforms.StickBreakingTransform` that
+    bijects its input down to a one-fewer-dimensional space; this a more
+    expensive less numerically stable transform but is needed for algorithms
+    like HMC.
+
 The ``biject_to`` and ``transform_to`` objects can be extended by user-defined
-constraints and transforms using their ``.register()`` method. you can create
-your own registry by creating a new :class:`ConstraintRegistry` object.
+constraints and transforms using their ``.register()`` method either as a
+function on singleton constraints::
+
+    transform_to.register(my_constraint, my_transform)
+
+or as a decorator on parameterized constraints::
+
+    @transform_to.register(MyConstraintClass)
+    def my_factory(constraint):
+        assert isinstance(constraint, MyConstraintClass)
+        return MyTransform(constraint.param1, constraint.param2)
+
+You can create your own registry by creating a new :class:`ConstraintRegistry`
+object.
 """
 
 from torch.distributions import constraints, transforms
