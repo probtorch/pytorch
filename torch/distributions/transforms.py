@@ -7,12 +7,14 @@ __all__ = [
     'AbsTransform',
     'AffineTransform',
     'BoltzmannTransform',
+    'ComposeTransform',
     'ExpTransform',
     'InverseTransform',
     'LowerCholeskyTransform',
     'SigmoidTransform',
     'StickBreakingTransform',
     'Transform',
+    'identity_transform',
 ]
 
 
@@ -165,19 +167,23 @@ class ComposeTransform(Transform):
             return False
         return self.parts == other.parts
 
+    @lazy_property
+    def inv(self):
+        inv = ComposeTransform([p.inv for p in reversed(self.parts)])
+        inv.inv = self
+        return inv
+
     @property
     def domain(self):
-        try:
-            return self.parts[0].domain
-        except IndexError:
+        if not self.parts:
             return constraints.real
+        return self.parts[0].domain
 
     @property
     def codomain(self):
-        try:
-            return self.parts[-1].codomain
-        except IndexError:
+        if not self.parts:
             return constraints.real
+        return self.parts[-1].codomain
 
     def _call(self, x):
         for part in self.parts:
@@ -190,8 +196,8 @@ class ComposeTransform(Transform):
         return y
 
     def log_abs_det_jacobian(self, x, y):
-        if not parts:
-            return x.new([0])
+        if not self.parts:
+            return x.new([0]).expand_as(x)
         result = 0
         for part in self.parts:
             y = part(x)
