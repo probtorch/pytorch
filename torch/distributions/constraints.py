@@ -191,7 +191,7 @@ class _PositiveDefinite(Constraint):
 
 class _RealVector(Constraint):
     """
-    Constraint to real-valued vectors. This is the same as `constraints.real`, 
+    Constrain to real-valued vectors. This is the same as `constraints.real`, 
     but additionally reduces across the `event_shape` dimension.
     """
     def check(self, value):
