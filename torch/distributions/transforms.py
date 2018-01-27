@@ -155,6 +155,54 @@ class InverseTransform(Transform):
         return -self.inv.log_abs_det_jacobian(y, x)
 
 
+class ComposeTransform(Transform):
+    def __init__(self, parts, cache_size=0):
+        self.parts = parts
+        super(ComposeTransform, self).__init__(cache_size=cache_size)
+
+    def __eq__(self, other):
+        if not isinstance(other, ComposeTransform):
+            return False
+        return self.parts == other.parts
+
+    @property
+    def domain(self):
+        try:
+            return self.parts[0].domain
+        except IndexError:
+            return constraints.real
+
+    @property
+    def codomain(self):
+        try:
+            return self.parts[-1].codomain
+        except IndexError:
+            return constraints.real
+
+    def _call(self, x):
+        for part in self.parts:
+            x = part(x)
+        return x
+
+    def _inverse(self, y):
+        for part in reversed(self.parts):
+            y = part.inverse(y)
+        return y
+
+    def log_abs_det_jacobian(self, x, y):
+        if not parts:
+            return x.new([0])
+        result = 0
+        for part in self.parts:
+            y = part(x)
+            result += part.log_abs_det_jacobian(x, y)
+            x = y
+        return result
+
+
+identity_transform = ComposeTransform([])
+
+
 class ExpTransform(Transform):
     """
     Transform via the mapping `y = exp(x)`.
