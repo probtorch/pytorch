@@ -1,3 +1,5 @@
+import weakref
+
 import torch
 from torch.autograd import Variable
 from torch.distributions import constraints
@@ -62,22 +64,28 @@ class Transform(object):
     bijective = False
 
     def __init__(self, cache_size=0):
+        self._cache_size = cache_size
+        self._inv = None
         if cache_size == 0:
             pass  # default behavior
         elif cache_size == 1:
             self._cached_x_y = None, None
-            self.__call__ = self._cached_call
-            self._inv_call = self._cached_inverse
         else:
-            raise NotImplementedError('cache_size must be 0 or 1')
+            raise ValueError('cache_size must be 0 or 1')
 
-    @lazy_property
+    @property
     def inv(self):
         """
         Returns the inverse :class:`Transform` of this transform.
         This should satisfy ``t.inv.inv is t``.
         """
-        return _InverseTransform(self)
+        inv = None
+        if self._inv is not None:
+            inv = self._inv()
+        if inv is None:
+            inv = _InverseTransform(self)
+            self._inv = weakref.ref(inv)
+        return inv
 
     def __eq__(self, other):
         return self is other
@@ -90,18 +98,8 @@ class Transform(object):
         """
         Computes the transform `x => y`.
         """
-        return self._call(x)
-
-    def _inv_call(self, y):
-        """
-        Inverts the transform `y => x`.
-        """
-        return self._inverse(y)
-
-    def _cached_call(self, x):
-        """
-        Computes the memoized transform `x => y`.
-        """
+        if self._cache_size == 0:
+            return self._call(x)
         x_old, y_old = self._cached_x_y
         if x is x_old:
             return y_old
@@ -109,10 +107,12 @@ class Transform(object):
         self._cached_x_y = x, y
         return y
 
-    def _cached_inverse(self, y):
+    def _inv_call(self, y):
         """
-        Inverts the memoized transform `y => x`.
+        Inverts the transform `y => x`.
         """
+        if self._cache_size == 0:
+            return self._inverse(y)
         x_old, y_old = self._cached_x_y
         if y is y_old:
             return x_old
@@ -146,30 +146,34 @@ class _InverseTransform(Transform):
     """
     def __init__(self, transform):
         super(_InverseTransform, self).__init__()
-        self.inv = transform
+        self._inv = transform
 
     @constraints.dependent_property
     def domain(self):
-        return self.inv.codomain
+        return self._inv.codomain
 
     @constraints.dependent_property
     def codomain(self):
-        return self.inv.domain
+        return self._inv.domain
 
     @property
     def bijective(self):
-        return self.inv.bijective
+        return self._inv.bijective
+
+    @property
+    def inv(self):
+        return self._inv
 
     def __eq__(self, other):
         if not isinstance(other, _InverseTransform):
             return False
-        return self.inv == other.inv
+        return self._inv == other._inv
 
     def __call__(self, x):
-        return self.inv._inv_call(x)
+        return self._inv._inv_call(x)
 
     def log_abs_det_jacobian(self, x, y):
-        return -self.inv.log_abs_det_jacobian(y, x)
+        return -self._inv.log_abs_det_jacobian(y, x)
 
 
 class ComposeTransform(Transform):
@@ -205,10 +209,15 @@ class ComposeTransform(Transform):
     def bijective(self):
         return all(p.bijective for p in self.parts)
 
-    @lazy_property
+    @property
     def inv(self):
-        inv = ComposeTransform([p.inv for p in reversed(self.parts)])
-        inv.inv = self
+        inv = None
+        if self._inv is not None:
+            inv = self._inv()
+        if inv is None:
+            inv = ComposeTransform([p.inv for p in reversed(self.parts)])
+            self._inv = weakref.ref(inv)
+            inv._inv = weakref.ref(self)
         return inv
 
     def __call__(self, x):
