@@ -189,20 +189,6 @@ EXAMPLES = [
             'scale': torch.Tensor([1e-5, 1e-5]),
         },
     ]),
-    Example(MultivariateNormal, [
-        {
-            'loc': Variable(torch.randn(5, 2), requires_grad=True),
-            'covariance_matrix': Variable(torch.Tensor([[2.0, 0.3],[0.3, 0.25]]), requires_grad=True),
-        },
-        {
-            'loc': Variable(torch.randn(2), requires_grad=True),
-            'scale_tril': Variable(torch.Tensor([[2.0, 0.0],[-0.5, 0.25]]), requires_grad=True),
-        },
-        {
-            'loc': torch.Tensor([1.0, -1.0]),
-            'covariance_matrix': torch.Tensor([[5.0, -0.5],[-0.5, 1.5]]),
-        },
-    ]),
     Example(Normal, [
         {
             'loc': Variable(torch.randn(5, 5), requires_grad=True),
@@ -234,6 +220,20 @@ EXAMPLES = [
             'scale': variable([1.0]),
             'alpha': 1.0
         }
+    ]),
+    Example(MultivariateNormal, [
+        {
+            'loc': Variable(torch.randn(5, 2), requires_grad=True),
+            'covariance_matrix': Variable(torch.Tensor([[2.0, 0.3],[0.3, 0.25]]), requires_grad=True),
+        },
+        {
+            'loc': Variable(torch.randn(2), requires_grad=True),
+            'scale_tril': Variable(torch.Tensor([[2.0, 0.0],[-0.5, 0.25]]), requires_grad=True),
+        },
+        {
+            'loc': torch.Tensor([1.0, -1.0]),
+            'covariance_matrix': torch.Tensor([[5.0, -0.5],[-0.5, 1.5]]),
+        },
     ]),
     Example(Poisson, [
         {
@@ -840,7 +840,6 @@ class TestDistributions(TestCase):
 
     @unittest.skipIf(not TEST_NUMPY, "Numpy not found")
     def test_multivariate_normal_log_prob(self):
-
         mean = Variable(torch.randn(3), requires_grad=True)
         tmp = torch.randn(3, 10)
         cov = Variable(torch.matmul(tmp, tmp.t())/tmp.shape[-1], requires_grad=True)
