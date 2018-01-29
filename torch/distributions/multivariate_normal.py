@@ -28,8 +28,8 @@ class MultivariateNormal(Distribution):
 
     Args:
         loc (Tensor or Variable): mean of the distribution
-        covariance_matrix (Tensor or Variable): covariance matrix (sigma positive-definite).
-        scale_tril (Tensor or Variable): lower-triangular factor of covariance.
+        covariance_matrix (Tensor or Variable): positive-definite covariance matrix
+        scale_tril (Tensor or Variable): lower-triangular factor of covariance
         
     Note:
         Only one of `covariance_matrix` or `scale_tril` can be specified.
