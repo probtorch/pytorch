@@ -1,22 +1,26 @@
+import math
 import warnings
 from functools import total_ordering
 
 import torch
-import math
 
-from .distribution import Distribution
 from .bernoulli import Bernoulli
-from .binomial import Binomial
 from .beta import Beta
+from .binomial import Binomial
 from .dirichlet import Dirichlet
+from .distribution import Distribution
 from .exponential import Exponential
 from .gamma import Gamma
 from .geometric import Geometric
 from .gumbel import Gumbel
 from .laplace import Laplace
+from .log_normal import LogNormal
 from .normal import Normal
 from .pareto import Pareto
+from .poisson import Poisson
+from .transformed_distribution import TransformedDistribution
 from .uniform import Uniform
+from torch.autograd import Variable, variable
 
 _KL_REGISTRY = {}  # Source of truth mapping a few general (type, type) pairs to functions.
 _KL_MEMOIZE = {}  # Memoized version mapping many specific (type, type) pairs to functions.
@@ -104,7 +108,11 @@ def _infinite_like(tensor):
     """
     Helper function for obtaining infinite KL Divergence throughout
     """
-    return tensor.new([float('inf')]).expand_as(tensor)
+    # verbose because of differening Variable/Tensor apis and lack of dtypes
+    if isinstance(tensor, Variable):
+        return variable(float('inf')).type_as(tensor).expand_as(tensor)
+    else:
+        return tensor.new([float('inf')]).expand_as(tensor)
 
 
 def _x_log_x(tensor):
@@ -257,13 +265,29 @@ def _kl_pareto_pareto(p, q):
     return result
 
 
+@register_kl(Poisson, Poisson)
+def _kl_poisson_poisson(p, q):
+    return p.rate * (p.rate.log() - q.rate.log()) - (p.rate - q.rate)
+
+
+@register_kl(TransformedDistribution, TransformedDistribution)
+def _kl_transformed_transformed(p, q):
+    if p.transforms != q.transforms:
+        raise NotImplementedError
+    return kl_divergence(p.base_dist, q.base_dist)
+
+
 @register_kl(Uniform, Uniform)
 def _kl_uniform_uniform(p, q):
     result = ((q.high - q.low) / (p.high - p.low)).log()
     result[(q.low > p.low) | (q.high < p.high)] = float('inf')
     return result
 
+
 # Different distributions
+@register_kl(Bernoulli, Poisson)
+def _kl_bernoulli_poisson(p, q):
+    return -p.entropy() - (p.probs * q.rate.log() - q.rate)
 
 
 @register_kl(Beta, Pareto)
@@ -482,6 +506,12 @@ def _kl_pareto_normal(p, q):
     result = t1 - t2 + (t3 + t4) / var_normal - 1
     result[p.alpha <= 2] = float('inf')
     return result
+
+
+@register_kl(Poisson, Bernoulli)
+@register_kl(Poisson, Binomial)
+def _kl_poisson_infinity(p, q):
+    return _infinite_like(p.rate)
 
 
 @register_kl(Uniform, Beta)
