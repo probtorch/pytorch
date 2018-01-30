@@ -802,9 +802,16 @@ class TestDistributions(TestCase):
         mean = Variable(torch.randn(5, 3), requires_grad=True)
         mean_no_batch = Variable(torch.randn(3), requires_grad=True)
         mean_multi_batch = Variable(torch.randn(6, 5, 3), requires_grad=True)
+        
+        # construct PSD covariance
         tmp = torch.randn(3, 10)
         cov = Variable(torch.matmul(tmp, tmp.t())/tmp.shape[-1], requires_grad=True)
         scale_tril = Variable(torch.potrf(cov.data, upper=False), requires_grad=True)
+        
+        # construct batch of PSD covariances
+        tmp = torch.randn(6, 5, 3, 10)
+        cov_batched = Variable((tmp.unsqueeze(-2)*tmp.unsqueeze(-3)).mean(-1), requires_grad=True)
+        scale_tril_batched = Variable(torch.stack([torch.potrf(C, upper=False) for C in cov_batched.data.view((-1,3,3))]).view(cov_batched.shape), requires_grad=True)
 
         # ensure that sample, batch, event shapes all handled correctly
         self.assertEqual(MultivariateNormal(mean, cov).sample().size(), (5, 3))
@@ -816,18 +823,25 @@ class TestDistributions(TestCase):
         self.assertEqual(MultivariateNormal(mean, cov).sample((2,7)).size(), (2, 7, 5, 3))
         self.assertEqual(MultivariateNormal(mean_no_batch, cov).sample((2,7)).size(), (2, 7, 3))
         self.assertEqual(MultivariateNormal(mean_multi_batch, cov).sample((2,7)).size(), (2, 7, 6, 5, 3))
+        self.assertEqual(MultivariateNormal(mean, cov_batched).sample((2,7)).size(), (2, 7, 6, 5, 3))
+        self.assertEqual(MultivariateNormal(mean_no_batch, cov_batched).sample((2,7)).size(), (2, 7, 6, 5, 3))
+        self.assertEqual(MultivariateNormal(mean_multi_batch, cov_batched).sample((2,7)).size(), (2, 7, 6, 5, 3))
         self.assertEqual(MultivariateNormal(mean, scale_tril=scale_tril).sample((2,7)).size(), (2, 7, 5, 3))
+        self.assertEqual(MultivariateNormal(mean, scale_tril=scale_tril_batched).sample((2,7)).size(), (2, 7, 6, 5, 3))         
 
         # check gradients
         self._gradcheck_log_prob(MultivariateNormal, (mean, cov))
         self._gradcheck_log_prob(MultivariateNormal, (mean_multi_batch, cov))
+        self._gradcheck_log_prob(MultivariateNormal, (mean_multi_batch, cov_batched))
         self._gradcheck_log_prob(MultivariateNormal, (mean, None, scale_tril))
+        self._gradcheck_log_prob(MultivariateNormal, (mean_no_batch, None, scale_tril_batched))
 
         # check these also work for tensors, not just variables
         mean = mean.data
         mean_no_batch = mean_no_batch.data
         mean_multi_batch = mean_multi_batch.data
         cov = cov.data
+        cov_batched = cov_batched.data
         self.assertEqual(MultivariateNormal(mean, cov).sample().size(), (5, 3))
         self.assertEqual(MultivariateNormal(mean_no_batch, cov).sample().size(), (3,))
         self.assertEqual(MultivariateNormal(mean_multi_batch, cov).sample().size(), (6, 5, 3))
@@ -837,6 +851,10 @@ class TestDistributions(TestCase):
         self.assertEqual(MultivariateNormal(mean, cov).sample((2,7)).size(), (2, 7, 5, 3))
         self.assertEqual(MultivariateNormal(mean_no_batch, cov).sample((2,7)).size(), (2, 7, 3))
         self.assertEqual(MultivariateNormal(mean_multi_batch, cov).sample((2,7)).size(), (2, 7, 6, 5, 3))
+        self.assertEqual(MultivariateNormal(mean, cov_batched).sample((2,7)).size(), (2, 7, 6, 5, 3))
+        self.assertEqual(MultivariateNormal(mean_no_batch, cov_batched).sample((2,7)).size(), (2, 7, 6, 5, 3))
+        self.assertEqual(MultivariateNormal(mean_multi_batch, cov_batched).sample((2,7)).size(), (2, 7, 6, 5, 3))
+    
 
     @unittest.skipIf(not TEST_NUMPY, "Numpy not found")
     def test_multivariate_normal_log_prob(self):
@@ -856,6 +874,22 @@ class TestDistributions(TestCase):
 
         self.assertAlmostEqual(0.0, np.mean((dist1.log_prob(x).data.numpy() - expected)**2), places=3)
         self.assertAlmostEqual(0.0, np.mean((dist2.log_prob(x).data.numpy() - expected)**2), places=3)
+
+        # Double-check that batched versions behave the same as unbatched
+        mean = Variable(torch.randn(5, 3), requires_grad=True)
+        tmp = torch.randn(5, 3, 10)
+        cov = Variable((tmp.unsqueeze(-2)*tmp.unsqueeze(-3)).mean(-1), requires_grad=True)
+
+        dist_batched = MultivariateNormal(mean, cov)
+        dist_unbatched = [MultivariateNormal(mean[i], cov[i]) for i in range(mean.size(0))]
+
+        x = dist_batched.sample((10,))
+        batched_prob = dist_batched.log_prob(x)
+        unbatched_prob = torch.stack([dist_unbatched[i].log_prob(x[:,i]) for i in range(5)]).t()
+
+        self.assertEqual(batched_prob.shape, unbatched_prob.shape)
+        self.assertAlmostEqual(0.0, (batched_prob - unbatched_prob).abs().max(), places=3)
+
 
     def test_exponential(self):
         rate = Variable(torch.randn(5, 5).abs(), requires_grad=True)
