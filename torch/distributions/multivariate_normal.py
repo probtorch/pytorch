@@ -30,7 +30,7 @@ def _batch_mv(bmat, bvec):
         raise ValueError("Batch shapes do not match: matrix {}, vector {}".format(bmat.shape, bvec.shape))
     bvec = bvec.unsqueeze(-1)
     
-    # using `torch.bmm` is surprisingly clunky... only works when `.dim() == 3`
+    # conform with `torch.bmm` interface, for matrices with `.dim() == 3`
     if bvec.dim() == 2:
         bvec.unsqueeze(0) #_
      # flatten batch dimensions
@@ -60,7 +60,7 @@ def _batch_diag(bmat):
 
 
 def _batch_mahalanobis(L, x):
-    """
+    r"""
     Computes the squared Mahalanobis distance :math:`\mathbf{x}^\top\mathbf{M}^{-1}\mathbf{x}` 
     for a factored :math:`\mathbf{M} = \mathbf{L}\mathbf{L}^\top`. 
     
@@ -129,7 +129,7 @@ class MultivariateNormal(Distribution):
 
     @lazy_property
     def covariance_matrix(self):
-        # Note: To use torch.bmm, we need to first squash the batch_shape into a single dimension
+        # To use torch.bmm, we first squash the batch_shape into a single dimension
         flat_scale_tril = self.scale_tril.unsqueeze(0).contiguous().view((-1,)+self._event_shape*2)
         return torch.bmm(flat_scale_tril, flat_scale_tril.transpose(-1,-2)).view(self.scale_tril.shape)
 
