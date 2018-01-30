@@ -72,7 +72,7 @@ class BivariateNormal(Distribution):
     """
     params = {'loc': constraints.real_vector,
               'covariance_matrix': constraints.positive_definite,
-              'scale_tril': constraints.real} # TODO: lower_cholesky }
+              'scale_tril': constraints.lower_cholesky }
     support = constraints.real_vector
     has_rsample = True
 
@@ -115,12 +115,14 @@ class BivariateNormal(Distribution):
         z0 = delta[...,0] / self.scale_tril[...,0,0]
         z1 = (delta[...,1] - self.scale_tril[...,1,0] * z0) / self.scale_tril[...,1,1]
         M = (torch.stack([z0, z1], -1)**2).sum(-1)
-        diag = torch.arange(2).long()
+        # TODO: why does this not work when diag is a Variable?
+        diag = torch.arange(2, out=self.scale_tril.data.new(2)).long()
         log_det = self.scale_tril[...,diag,diag].abs().log().sum(-1)
         return -0.5*M - math.log(2*math.pi) - log_det
 
     def entropy(self):
-        diag = torch.arange(2).long()
+        # TODO: why does this not work when diag is a Variable?
+        diag = torch.arange(2, out=self.scale_tril.data.new(2)).long()
         log_det = self.scale_tril[...,diag,diag].abs().log().sum(-1)
         H = 1.0 + math.log(2*math.pi) + log_det
         if len(self._batch_shape) == 0:
