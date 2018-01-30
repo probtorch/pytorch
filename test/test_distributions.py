@@ -101,20 +101,6 @@ EXAMPLES = [
         {'probs': Variable(torch.Tensor([[0.1, 0.2, 0.3], [0.5, 0.3, 0.2]]), requires_grad=True), 'total_count': 10},
         {'probs': Variable(torch.Tensor([[1.0, 0.0], [0.0, 1.0]]), requires_grad=True), 'total_count': 10},
     ]),
-    Example(BivariateNormal, [
-        {
-            'loc': Variable(torch.randn(5, 2), requires_grad=True),
-            'covariance_matrix': Variable(torch.Tensor([[2.0, 0.3],[0.3, 0.25]]), requires_grad=True),
-        },
-        {
-            'loc': Variable(torch.randn(2), requires_grad=True),
-            'scale_tril': Variable(torch.Tensor([[2.0, 0.0],[-0.5, 0.25]]), requires_grad=True),
-        },
-        {
-            'loc': torch.Tensor([1.0, -1.0]),
-            'covariance_matrix': torch.Tensor([[5.0, -0.5],[-0.5, 1.5]]),
-        },
-    ]),
     Example(Multinomial, [
         {'probs': Variable(torch.Tensor([[0.1, 0.2, 0.3], [0.5, 0.3, 0.2]]), requires_grad=True), 'total_count': 10},
         {'probs': Variable(torch.Tensor([[1.0, 0.0], [0.0, 1.0]]), requires_grad=True), 'total_count': 10},
@@ -259,6 +245,20 @@ EXAMPLES = [
             'low': torch.Tensor([1.0, 1.0]),
             'high': torch.Tensor([2.0, 3.0]),
         },
+    ]),
+    Example(BivariateNormal, [
+        {
+            'loc': Variable(torch.randn(5, 2), requires_grad=True),
+            'covariance_matrix': Variable(torch.Tensor([[2.0, 0.3],[0.3, 0.25]]), requires_grad=True),
+        },
+        {
+            'loc': Variable(torch.randn(2, 2), requires_grad=True),
+            'scale_tril': Variable(torch.Tensor([[[1.5, 0.0],[2.2, 0.1]],[[2.0, 0.0],[-0.5, 0.25]]]), requires_grad=True),
+        },
+#         {
+#             'loc': torch.Tensor([1.0, -1.0]),
+#             'covariance_matrix': torch.Tensor([[5.0, -0.5],[-0.5, 1.5]]),
+#         },
     ]),
 ]
 
@@ -405,6 +405,60 @@ class TestDistributions(TestCase):
         self.assertEqual(Bernoulli(p).sample(sample_shape=(2, 5)).size(),
                          (2, 5, 2, 3, 5))
         self.assertEqual(Bernoulli(p).sample_n(2).size(), (2, 2, 3, 5))
+
+    def test_bivariate_normal_shape(self):
+        mean = Variable(torch.randn(5, 2), requires_grad=True)
+        mean_no_batch = Variable(torch.randn(2), requires_grad=True)
+        mean_multi_batch = Variable(torch.randn(6, 5, 2), requires_grad=True)
+
+        tmp = torch.randn(5, 2, 10)
+        cov_batched = Variable((tmp.unsqueeze(1)*tmp.unsqueeze(2)).mean(-1), requires_grad=True)
+        scale_tril_batched = Variable(torch.stack([torch.potrf(cov_batched.data[i], upper=False) for i in range(tmp.shape[0])]), requires_grad=True)
+
+        tmp = torch.randn(2, 10)
+        cov = Variable(torch.matmul(tmp, tmp.t())/tmp.shape[-1], requires_grad=True)
+        scale_tril = Variable(torch.potrf(cov.data, upper=False), requires_grad=True)
+
+        # ensure that sample, batch, event shapes all handled correctly
+        self.assertEqual(BivariateNormal(mean, cov_batched).sample().size(), (5, 2))
+        self.assertEqual(BivariateNormal(mean_no_batch, cov_batched).sample().size(), (5, 2))
+        self.assertEqual(BivariateNormal(mean_no_batch, cov).sample().size(), (2,))
+        self.assertEqual(BivariateNormal(mean_multi_batch, cov).sample().size(), (6, 5, 2))
+        self.assertEqual(BivariateNormal(mean_multi_batch, cov_batched).sample().size(), (6, 5, 2))
+        self.assertEqual(BivariateNormal(mean, cov).sample((3,)).size(), (3, 5, 2))
+        self.assertEqual(BivariateNormal(mean_no_batch, cov).sample((3,)).size(), (3, 2))
+        self.assertEqual(BivariateNormal(mean_multi_batch, cov).sample((3,)).size(), (3, 6, 5, 2))
+        self.assertEqual(BivariateNormal(mean, cov).sample((3,7)).size(), (3, 7, 5, 2))
+        self.assertEqual(BivariateNormal(mean_no_batch, cov).sample((3,7)).size(), (3, 7, 2))
+        self.assertEqual(BivariateNormal(mean_multi_batch, cov).sample((3,7)).size(), (3, 7, 6, 5, 2))
+        self.assertEqual(BivariateNormal(mean, scale_tril=scale_tril).sample((3,7)).size(), (3, 7, 5, 2))
+        self.assertEqual(BivariateNormal(mean, scale_tril=scale_tril_batched).sample((3,7)).size(), (3, 7, 5, 2))
+
+        # check gradients
+        self._gradcheck_log_prob(BivariateNormal, (mean, cov))
+        self._gradcheck_log_prob(BivariateNormal, (mean_multi_batch, cov))
+        self._gradcheck_log_prob(BivariateNormal, (mean, None, scale_tril))
+
+
+    @unittest.skipIf(not TEST_NUMPY, "Numpy not found")
+    def test_bivariate_normal_log_prob(self):
+
+        mean = Variable(torch.randn(2), requires_grad=True)
+        tmp = torch.randn(2, 10)
+        cov = Variable(torch.matmul(tmp, tmp.t())/tmp.shape[-1], requires_grad=True)
+        scale_tril = Variable(torch.potrf(cov.data, upper=False), requires_grad=True)
+
+        # check that logprob values match scipy logpdf,
+        # and that covariance and scale_tril parameters are equivalent
+        dist1 = BivariateNormal(mean, cov)
+        dist2 = BivariateNormal(mean, scale_tril=scale_tril)
+        ref_dist = scipy.stats.multivariate_normal(mean.data.numpy(), cov.data.numpy())
+
+        x = dist1.sample((10,))
+        expected = ref_dist.logpdf(x.data.numpy())
+
+        self.assertAlmostEqual(0.0, np.mean((dist1.log_prob(x).data.numpy() - expected)**2), places=3)
+        self.assertAlmostEqual(0.0, np.mean((dist2.log_prob(x).data.numpy() - expected)**2), places=3)
 
     def test_geometric(self):
         p = variable([0.7, 0.2, 0.4], requires_grad=True)
