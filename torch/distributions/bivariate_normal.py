@@ -30,8 +30,7 @@ def _batch_mv(bmat, bvec):
     event_dim = bvec.shape[-1]
     bmat = bmat.expand(batch_shape + (event_dim, event_dim))
     if batch_shape != bmat.shape[:-2]:
-        print "SHAPE MISMATCH:", batch_shape, bmat.shape[:-2]
-        assert False
+        raise ValueError("Batch shapes do not match: matrix {}, vector {}".format(bmat.shape, bvec.shape))
     bvec = bvec.unsqueeze(-1)
     
     # using `torch.bmm` is surprisingly clunky... only works when `.dim() == 3`
@@ -72,7 +71,7 @@ class BivariateNormal(Distribution):
         
     """
     params = {'loc': constraints.real_vector,
-              'covariance_matrix': constraints.real, # TODO: positive_definite,
+              'covariance_matrix': constraints.positive_definite,
               'scale_tril': constraints.real} # TODO: lower_cholesky }
     support = constraints.real_vector
     has_rsample = True

@@ -187,7 +187,11 @@ class _PositiveDefinite(Constraint):
     Constrain to positive-definite matrices.
     """
     def check(self, value):
-        return (torch.symeig(value)[0] > 0.0)
+        matrix_shape = value.shape[-2:]
+        batch_shape = value.shape[:-2]
+        # TODO: replace with batched linear algebra routine when one becomes available
+        # note that `symeig()` returns eigenvalues in ascending order
+        return torch.stack([v.symeig()[0][:1] > 0.0 for v in value.contiguous().view((-1,)+matrix_shape)]).view(batch_shape)
 
 
 class _RealVector(Constraint):
