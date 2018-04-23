@@ -4,28 +4,31 @@
 
 #include "caffe2/utils/math.h"
 
-#include <array>
 #include <limits>
+#include <numeric>
 #include <vector>
 
 #include <cub/block/block_reduce.cuh>
 #include <cub/cub.cuh>
 
-#include <thrust/device_vector.h>
-#include <thrust/execution_policy.h>
-#include <thrust/find.h>
-#include <thrust/functional.h>
-#include <thrust/partition.h>
-#include <thrust/sequence.h>
-
 #include "caffe2/core/context_gpu.h"
 #include "caffe2/utils/conversions.h"
+
+#if EIGEN_VERSION_AT_LEAST(3, 3, 0)
+#include "unsupported/Eigen/CXX11/Tensor"
+#endif // EIGEN_VERSION_AT_LEAST(3, 3, 0)
 
 #if THRUST_VERSION >= 100800
 #define THRUST_SUPPORTS_PER_THREAD
 #endif  // THRUST_VERSION >= 100800
 
 namespace caffe2 {
+
+#if EIGEN_VERSION_AT_LEAST(3, 3, 0)
+template <typename T, int D>
+using EigenTensorMap = Eigen::TensorMap<Eigen::Tensor<T, D>>;
+#endif // EIGEN_VERSION_AT_LEAST(3, 3, 0)
+
 namespace math {
 
 #define DELEGATE_SIMPLE_CUDA_UNARY_FUNCTION(T, Funcname, function)             \
@@ -2010,6 +2013,7 @@ void Im2colNd<float, CUDAContext, StorageOrder::NCHW>(
       break;
     case 4:
       IM2COL_ND_KERNEL(4);
+      break;
     case 5:
       IM2COL_ND_KERNEL(5);
       break;
@@ -2060,7 +2064,7 @@ template <typename T, class Reducer>
 __global__ void RowwiseReduceKernel(
     const int rows,
     const int cols,
-    const Reducer& reducer,
+    const Reducer reducer,
     const T init,
     const T* X,
     T* Y) {
@@ -2082,7 +2086,7 @@ template <typename T, class Reducer>
 __global__ void ColwiseReduceKernel(
     const int rows,
     const int cols,
-    const Reducer& reducer,
+    const Reducer reducer,
     const T init,
     const T* X,
     T* Y) {
@@ -2157,8 +2161,6 @@ namespace {
 
 #if EIGEN_VERSION_AT_LEAST(3, 3, 0)
 
-constexpr int kEigenMaxDimensions = 4;
-
 template <typename T, class Reducer, int kNumDims, int kNumAxes>
 void EigenReduceTensorCUDAImpl(
     const int* dims,
@@ -2167,20 +2169,17 @@ void EigenReduceTensorCUDAImpl(
     const T* X,
     T* Y,
     CUDAContext* context) {
-  std::array<int, kNumDims> dims_host;
-  std::array<int, kNumDims> axes_host;
-  context->Copy<int, CUDAContext, CPUContext>(kNumDims, dims, dims_host.data());
-  context->Copy<int, CUDAContext, CPUContext>(kNumAxes, axes, axes_host.data());
   Eigen::DSizes<Eigen::DenseIndex, kNumDims> X_dims;
   Eigen::DSizes<Eigen::DenseIndex, kNumDims> Y_dims;
-  Eigen::array<TIndex, kNumAxes> reduce_dims;
+  Eigen::array<Eigen::DenseIndex, kNumAxes> reduce_dims;
   for (int i = 0; i < kNumDims; ++i) {
-    X_dims[i] = static_cast<Eigen::DenseIndex>(dims_host[i]);
-    Y_dims[i] = static_cast<Eigen::DenseIndex>(dims_host[i]);
+    X_dims[i] = static_cast<Eigen::DenseIndex>(dims[kNumDims - 1 - i]);
+    Y_dims[i] = static_cast<Eigen::DenseIndex>(dims[kNumDims - 1 - i]);
   }
   for (int i = 0; i < kNumAxes; ++i) {
-    Y_dims[axes_host[i]] = static_cast<Eigen::DenseIndex>(1);
-    reduce_dims[i] = axes_host[i];
+    Y_dims[kNumDims - 1 - axes[i]] = static_cast<Eigen::DenseIndex>(1);
+    reduce_dims[kNumAxes - 1 - i] =
+        static_cast<Eigen::DenseIndex>(kNumDims - 1 - axes[i]);
   }
   const cudaStream_t cuda_stream = context->cuda_stream();
   const Eigen::CudaStreamDevice stream_device(
@@ -2203,10 +2202,6 @@ bool EigenReduceTensorCUDA(
     const T* X,
     T* Y,
     CUDAContext* context) {
-#if EIGEN_VERSION_AT_LEAST(3, 3, 0)
-  if (num_dims > kEigenMaxDimensions) {
-    return false;
-  }
   switch (num_dims) {
     case 1: {
       switch (num_axes) {
@@ -2280,269 +2275,733 @@ bool EigenReduceTensorCUDA(
     }
     default: { return false; }
   }
-#endif // EIGEN_VERSION_AT_LEAST(3, 3, 0)
-  return false;
+}
+
+std::vector<int> MakeTransposeAxes(
+    const int num_dims,
+    const int* dims,
+    const int num_axes,
+    const int* axes) {
+  std::vector<int> transpose_axes(num_dims);
+  const int d = num_dims - num_axes;
+  std::copy_n(axes, num_axes, transpose_axes.begin() + d);
+  std::sort(transpose_axes.begin() + d, transpose_axes.end());
+  int p = 0;
+  int q = d;
+  for (int i = 0; i < num_dims; ++i) {
+    if (q < num_dims && i == transpose_axes[q]) {
+      ++q;
+    } else {
+      transpose_axes[p++] = i;
+    }
+  }
+  return transpose_axes;
 }
 
 template <typename T, class Reducer>
 void ReduceTensorCUDA(
-    const int X_size,
-    const int Y_size,
     const int num_dims,
     const int* dims,
     const int num_axes,
     const int* axes,
     const Reducer& reducer,
-    const T init,
+    const T& init,
     const T* X,
     T* Y,
     CUDAContext* context,
     Tensor<CUDAContext>* scratch_ptr) {
-  thrust::device_vector<int> transpose_axes(num_dims);
-  thrust::sequence(
-      thrust::device, transpose_axes.begin(), transpose_axes.end());
-  thrust::stable_partition(
-      thrust::device,
-      transpose_axes.begin(),
-      transpose_axes.end(),
-      [num_axes, axes] __host__ __device__(const int x) {
-        return thrust::find(thrust::device, axes, axes + num_axes, x) ==
-            axes + num_axes;
-      });
-  const int outer_size = Y_size;
-  const int inner_size = X_size / Y_size;
-  scratch_ptr->Resize(std::vector<int>{outer_size, inner_size});
-  Transpose<T, CUDAContext>(
-      X_size,
+  const std::vector<int> transpose_axes =
+      MakeTransposeAxes(num_dims, dims, num_axes, axes);
+  const int d = num_dims - num_axes;
+  int outer_size = 1;
+  for (int i = 0; i < d; ++i) {
+    outer_size *= dims[transpose_axes[i]];
+  }
+  int inner_size = 1;
+  for (int i = d; i < num_dims; ++i) {
+    inner_size *= dims[transpose_axes[i]];
+  }
+  const T* X_data = X;
+  if (transpose_axes[d] != d) {
+    scratch_ptr->Resize(std::vector<int>{outer_size, inner_size});
+    Transpose<T, CUDAContext>(
+        num_dims,
+        dims,
+        transpose_axes.data(),
+        X,
+        scratch_ptr->mutable_data<T>(),
+        context);
+    X_data = scratch_ptr->data<T>();
+  }
+  RowwiseReduceKernel<T>
+      <<<std::min(outer_size, CAFFE_MAXIMUM_NUM_BLOCKS),
+         CAFFE_CUDA_NUM_THREADS,
+         0,
+         context->cuda_stream()>>>(
+          outer_size, inner_size, reducer, init, X_data, Y);
+}
+
+template <typename T>
+void ReduceMinCUDAImpl(
+    const int num_dims,
+    const int* dims,
+    const int num_axes,
+    const int* axes,
+    const T* X,
+    T* Y,
+    CUDAContext* context,
+    Tensor<CUDAContext>* scratch_ptr) {
+  CAFFE_ENFORCE_LE(num_axes, num_dims);
+#if EIGEN_VERSION_AT_LEAST(3, 3, 0)
+  if (EigenReduceTensorCUDA(
+          num_dims,
+          dims,
+          num_axes,
+          axes,
+          Eigen::internal::MinReducer<T>(),
+          X,
+          Y,
+          context)) {
+    return;
+  }
+#endif // EIGEN_VERSION_AT_LEAST(3, 3, 0)
+  ReduceTensorCUDA(
       num_dims,
       dims,
-      transpose_axes.data().get(),
+      num_axes,
+      axes,
+      cub::Min(),
+      std::numeric_limits<T>::max(),
       X,
-      scratch_ptr->mutable_data<T>(),
-      context);
-  RowwiseReduceKernel<<<
-      std::min(outer_size, CAFFE_MAXIMUM_NUM_BLOCKS),
-      CAFFE_CUDA_NUM_THREADS,
-      0,
-      context->cuda_stream()>>>(
-      outer_size, inner_size, reducer, init, scratch_ptr->data<T>(), Y);
+      Y,
+      context,
+      scratch_ptr);
+}
+
+template <typename T>
+void ReduceMaxCUDAImpl(
+    const int num_dims,
+    const int* dims,
+    const int num_axes,
+    const int* axes,
+    const T* X,
+    T* Y,
+    CUDAContext* context,
+    Tensor<CUDAContext>* scratch_ptr) {
+  CAFFE_ENFORCE_LE(num_axes, num_dims);
+#if EIGEN_VERSION_AT_LEAST(3, 3, 0)
+  if (EigenReduceTensorCUDA(
+          num_dims,
+          dims,
+          num_axes,
+          axes,
+          Eigen::internal::MaxReducer<T>(),
+          X,
+          Y,
+          context)) {
+    return;
+  }
+#endif // EIGEN_VERSION_AT_LEAST(3, 3, 0)
+  ReduceTensorCUDA(
+      num_dims,
+      dims,
+      num_axes,
+      axes,
+      cub::Max(),
+      std::numeric_limits<T>::lowest(),
+      X,
+      Y,
+      context,
+      scratch_ptr);
+}
+
+template <typename T>
+void ReduceSumCUDAImpl(
+    const int num_dims,
+    const int* dims,
+    const int num_axes,
+    const int* axes,
+    const T* X,
+    T* Y,
+    CUDAContext* context,
+    Tensor<CUDAContext>* scratch_ptr) {
+  CAFFE_ENFORCE_LE(num_axes, num_dims);
+#if EIGEN_VERSION_AT_LEAST(3, 3, 0)
+  if (EigenReduceTensorCUDA(
+          num_dims,
+          dims,
+          num_axes,
+          axes,
+          Eigen::internal::SumReducer<T>(),
+          X,
+          Y,
+          context)) {
+    return;
+  }
+#endif // EIGEN_VERSION_AT_LEAST(3, 3, 0)
+  ReduceTensorCUDA(
+      num_dims,
+      dims,
+      num_axes,
+      axes,
+      cub::Sum(),
+      T(0),
+      X,
+      Y,
+      context,
+      scratch_ptr);
+}
+
+template <typename T>
+void ReduceMeanCUDAImpl(
+    const int num_dims,
+    const int* dims,
+    const int num_axes,
+    const int* axes,
+    const T* X,
+    T* Y,
+    CUDAContext* context,
+    Tensor<CUDAContext>* scratch_ptr) {
+  CAFFE_ENFORCE_LE(num_axes, num_dims);
+#if EIGEN_VERSION_AT_LEAST(3, 3, 0)
+  if (EigenReduceTensorCUDA(
+          num_dims,
+          dims,
+          num_axes,
+          axes,
+          Eigen::internal::MeanReducer<T>(),
+          X,
+          Y,
+          context)) {
+    return;
+  }
+#endif // EIGEN_VERSION_AT_LEAST(3, 3, 0)
+  ReduceTensorCUDA(
+      num_dims,
+      dims,
+      num_axes,
+      axes,
+      cub::Sum(),
+      T(0),
+      X,
+      Y,
+      context,
+      scratch_ptr);
+  const int X_size =
+      std::accumulate(dims, dims + num_dims, 1, std::multiplies<int>());
+  int scale = 1;
+  for (int i = 0; i < num_axes; ++i) {
+    scale *= dims[axes[i]];
+  }
+  const int Y_size = X_size / scale;
+  Scale<T, CUDAContext>(
+      Y_size, 1.0f / static_cast<float>(scale), Y, Y, context);
 }
 
 } // namespace
 
-#define CAFFE2_SPECIALIZED_CUDA_REDUCE_SUM(T) \
-  template <>                                 \
-  void ReduceSum<T, CUDAContext>(             \
-      const int X_size,                       \
-      const int Y_size,                       \
-      const int num_dims,                     \
-      const int* dims,                        \
-      const int num_axes,                     \
-      const int* axes,                        \
-      const T* X,                             \
-      T* Y,                                   \
-      CUDAContext* context,                   \
-      Tensor<CUDAContext>* scratch_ptr) {     \
-    CAFFE_ENFORCE_LE(num_axes, num_dims);     \
-    if (EigenReduceTensorCUDA(                \
-            num_dims,                         \
-            dims,                             \
-            num_axes,                         \
-            axes,                             \
-            Eigen::internal::SumReducer<T>(), \
-            X,                                \
-            Y,                                \
-            context)) {                       \
-      return;                                 \
-    }                                         \
-    ReduceTensorCUDA(                         \
-        X_size,                               \
-        Y_size,                               \
-        num_dims,                             \
-        dims,                                 \
-        num_axes,                             \
-        axes,                                 \
-        cub::Sum(),                           \
-        T(0),                                 \
-        X,                                    \
-        Y,                                    \
-        context,                              \
-        scratch_ptr);                         \
+#define CAFFE2_SPECIALIZED_CUDA_REDUCE_MIN(T)                        \
+  template <>                                                        \
+  void ReduceMin<T, CUDAContext>(                                    \
+      const int num_dims,                                            \
+      const int* dims,                                               \
+      const int num_axes,                                            \
+      const int* axes,                                               \
+      const T* X,                                                    \
+      T* Y,                                                          \
+      CUDAContext* context,                                          \
+      Tensor<CUDAContext>* scratch_ptr) {                            \
+    ReduceMinCUDAImpl<T>(                                            \
+        num_dims, dims, num_axes, axes, X, Y, context, scratch_ptr); \
+  }
+CAFFE2_SPECIALIZED_CUDA_REDUCE_MIN(float)
+#undef CAFFE2_SPECIALIZED_CUDA_REDUCE_MIN
+
+#define CAFFE2_SPECIALIZED_CUDA_REDUCE_MAX(T)                        \
+  template <>                                                        \
+  void ReduceMax<T, CUDAContext>(                                    \
+      const int num_dims,                                            \
+      const int* dims,                                               \
+      const int num_axes,                                            \
+      const int* axes,                                               \
+      const T* X,                                                    \
+      T* Y,                                                          \
+      CUDAContext* context,                                          \
+      Tensor<CUDAContext>* scratch_ptr) {                            \
+    ReduceMaxCUDAImpl<T>(                                            \
+        num_dims, dims, num_axes, axes, X, Y, context, scratch_ptr); \
+  }
+CAFFE2_SPECIALIZED_CUDA_REDUCE_MAX(float)
+#undef CAFFE2_SPECIALIZED_CUDA_REDUCE_MAX
+
+#define CAFFE2_SPECIALIZED_CUDA_REDUCE_SUM(T)                        \
+  template <>                                                        \
+  void ReduceSum<T, CUDAContext>(                                    \
+      const int num_dims,                                            \
+      const int* dims,                                               \
+      const int num_axes,                                            \
+      const int* axes,                                               \
+      const T* X,                                                    \
+      T* Y,                                                          \
+      CUDAContext* context,                                          \
+      Tensor<CUDAContext>* scratch_ptr) {                            \
+    ReduceSumCUDAImpl<T>(                                            \
+        num_dims, dims, num_axes, axes, X, Y, context, scratch_ptr); \
   }
 CAFFE2_SPECIALIZED_CUDA_REDUCE_SUM(float)
 #undef CAFFE2_SPECIALIZED_CUDA_REDUCE_SUM
 
-#define CAFFE2_SPECIALIZED_CUDA_REDUCE_MEAN(T)                   \
-  template <>                                                    \
-  void ReduceMean<T, CUDAContext>(                               \
-      const int X_size,                                          \
-      const int Y_size,                                          \
-      const int num_dims,                                        \
-      const int* dims,                                           \
-      const int num_axes,                                        \
-      const int* axes,                                           \
-      const T* X,                                                \
-      T* Y,                                                      \
-      CUDAContext* context,                                      \
-      Tensor<CUDAContext>* scratch_ptr) {                        \
-    CAFFE_ENFORCE_LE(num_axes, num_dims);                        \
-    if (EigenReduceTensorCUDA(                                   \
-            num_dims,                                            \
-            dims,                                                \
-            num_axes,                                            \
-            axes,                                                \
-            Eigen::internal::MeanReducer<T>(),                   \
-            X,                                                   \
-            Y,                                                   \
-            context)) {                                          \
-      return;                                                    \
-    }                                                            \
-    ReduceTensorCUDA(                                            \
-        X_size,                                                  \
-        Y_size,                                                  \
-        num_dims,                                                \
-        dims,                                                    \
-        num_axes,                                                \
-        axes,                                                    \
-        cub::Sum(),                                              \
-        T(0),                                                    \
-        X,                                                       \
-        Y,                                                       \
-        context,                                                 \
-        scratch_ptr);                                            \
-    Scale<T, CUDAContext>(                                       \
-        Y_size,                                                  \
-        static_cast<float>(Y_size) / static_cast<float>(X_size), \
-        Y,                                                       \
-        Y,                                                       \
-        context);                                                \
+#define CAFFE2_SPECIALIZED_CUDA_REDUCE_MEAN(T)                       \
+  template <>                                                        \
+  void ReduceMean<T, CUDAContext>(                                   \
+      const int num_dims,                                            \
+      const int* dims,                                               \
+      const int num_axes,                                            \
+      const int* axes,                                               \
+      const T* X,                                                    \
+      T* Y,                                                          \
+      CUDAContext* context,                                          \
+      Tensor<CUDAContext>* scratch_ptr) {                            \
+    ReduceMeanCUDAImpl<T>(                                           \
+        num_dims, dims, num_axes, axes, X, Y, context, scratch_ptr); \
   }
 CAFFE2_SPECIALIZED_CUDA_REDUCE_MEAN(float)
 #undef CAFFE2_SPECIALIZED_CUDA_REDUCE_MEAN
 
 namespace {
 
-constexpr int kCompileTimeCUDAMaxTransposeDims = 8;
+constexpr int kCUDABroadcastMaxDims = 8;
 
-__device__ void ComputeXStride(
-    const int ndim,
-    const int* x_dims,
-    const int* axes,
-    int* x_strides) {
-  int buff[kCompileTimeCUDAMaxTransposeDims];
-  int cur_stride = 1;
+template <typename T, int D>
+__global__ void BroadcastCUDAKernel(
+    const int Y_size,
+    const SimpleArray<int, D> X_strides,
+    const SimpleArray<int, D> Y_dims,
+    const T* X,
+    T* Y) {
+  CUDA_1D_KERNEL_LOOP(Y_index, Y_size) {
+    int X_index = 0;
+    int Y_index_val = Y_index;
 #pragma unroll
-  for (int i = ndim - 1; i >= 0; --i) {
-    buff[i] = cur_stride;
+    for (int i = D - 1; i >= 0; --i) {
+      X_index += X_strides.data[i] == 0
+          ? 0
+          : (Y_index_val % Y_dims.data[i]) * X_strides.data[i];
+      Y_index_val /= Y_dims.data[i];
+    }
 #if __CUDA_ARCH__ >= 350
-    cur_stride *= __ldg(x_dims + i);
+    Y[Y_index] = __ldg(X + X_index);
 #else
-    cur_stride *= x_dims[i];
-#endif
-  }
-#pragma unroll
-  for (int i = 0; i < ndim; ++i) {
-#if __CUDA_ARCH__ >= 350
-    x_strides[i] = buff[__ldg(axes + i)];
-#else
-    x_strides[i] = buff[axes[i]];
+    Y[Y_index] = X[X_index];
 #endif
   }
 }
 
-__device__ int GetXIndex(
-    const int ndim,
-    const int* y_dims,
-    const int* x_strides,
-    int y_index) {
-  int x_index = 0;
-#pragma unroll
-  for (int i = ndim - 1; i >= 0 && y_index > 0; --i) {
-    x_index += (y_index % y_dims[i]) * x_strides[i];
-    y_index /= y_dims[i];
+template <typename T, int D>
+void BroadcastCUDAImpl(
+    const int X_ndim,
+    const int* X_dims,
+    const int* Y_dims,
+    const T* X,
+    T* Y,
+    CUDAContext* context) {
+  SimpleArray<int, D> X_strides_array;
+  SimpleArray<int, D> Y_dims_array;
+  const int d = D - X_ndim;
+  std::fill(X_strides_array.data, X_strides_array.data + d, 0);
+  int cur_stride = 1;
+  for (int i = D - 1; i >= d; --i) {
+    CAFFE_ENFORCE(X_dims[i - d] == 1 || X_dims[i - d] == Y_dims[i]);
+    X_strides_array.data[i] = X_dims[i - d] == 1 ? 0 : cur_stride;
+    cur_stride *= X_dims[i - d];
   }
-  return x_index;
+  std::copy_n(Y_dims, D, Y_dims_array.data);
+  const int Y_size =
+      std::accumulate(Y_dims, Y_dims + D, 1, std::multiplies<int>());
+  BroadcastCUDAKernel<T, D>
+      <<<CAFFE_GET_BLOCKS(Y_size),
+         CAFFE_CUDA_NUM_THREADS,
+         0,
+         context->cuda_stream()>>>(Y_size, X_strides_array, Y_dims_array, X, Y);
 }
 
 template <typename T>
-__global__ void TransposeCUDAKernel(
-    const int size,
-    const int ndim,
-    const int* x_dims,
-    const int* y_dims,
-    const int* axes,
+void BroadcastCUDA(
+    const int X_ndim,
+    const int* X_dims,
+    const int Y_ndim,
+    const int* Y_dims,
     const T* X,
-    T* Y) {
-  __shared__ int x_strides[kCompileTimeCUDAMaxTransposeDims];
-  __shared__ int y_dims_shared[kCompileTimeCUDAMaxTransposeDims];
-  const int tid = threadIdx.x;
-  if (tid == 0) {
-    ComputeXStride(ndim, x_dims, axes, x_strides);
-  }
-  if (tid < ndim) {
-    if (y_dims == nullptr) {
-      y_dims_shared[tid] = x_dims[axes[tid]];
-    } else {
-      y_dims_shared[tid] = y_dims[tid];
+    T* Y,
+    CUDAContext* context) {
+  CAFFE_ENFORCE_LE(X_ndim, Y_ndim);
+  switch (Y_ndim) {
+    case 1: {
+      BroadcastCUDAImpl<T, 1>(X_ndim, X_dims, Y_dims, X, Y, context);
+      break;
     }
-  }
-  __syncthreads();
-  CUDA_1D_KERNEL_LOOP(y_index, size) {
-    const int x_index = GetXIndex(ndim, y_dims_shared, x_strides, y_index);
-#if __CUDA_ARCH__ >= 350
-    Y[y_index] = __ldg(X + x_index);
-#else
-    Y[y_index] = X[x_index];
-#endif
+    case 2: {
+      BroadcastCUDAImpl<T, 2>(X_ndim, X_dims, Y_dims, X, Y, context);
+      break;
+    }
+    case 3: {
+      BroadcastCUDAImpl<T, 3>(X_ndim, X_dims, Y_dims, X, Y, context);
+      break;
+    }
+    case 4: {
+      BroadcastCUDAImpl<T, 4>(X_ndim, X_dims, Y_dims, X, Y, context);
+      break;
+    }
+    case 5: {
+      BroadcastCUDAImpl<T, 5>(X_ndim, X_dims, Y_dims, X, Y, context);
+      break;
+    }
+    case 6: {
+      BroadcastCUDAImpl<T, 6>(X_ndim, X_dims, Y_dims, X, Y, context);
+      break;
+    }
+    case 7: {
+      BroadcastCUDAImpl<T, 7>(X_ndim, X_dims, Y_dims, X, Y, context);
+      break;
+    }
+    case 8: {
+      BroadcastCUDAImpl<T, 8>(X_ndim, X_dims, Y_dims, X, Y, context);
+      break;
+    }
+    default: { break; }
   }
 }
 
 } // namespace
 
-#define CAFFE2_SPECIALIZED_CUDA_TRANSPOSE(T)                                  \
-  template <>                                                                 \
-  void Transpose<T, CUDAContext>(                                             \
-      const int size,                                                         \
-      const int ndim,                                                         \
-      const int* dims,                                                        \
-      const int* axes,                                                        \
-      const T* X,                                                             \
-      T* Y,                                                                   \
-      CUDAContext* context) {                                                 \
-    CAFFE_ENFORCE_LE(                                                         \
-        ndim,                                                                 \
-        kCompileTimeCUDAMaxTransposeDims,                                     \
-        "ndim exceeds compile time max.");                                    \
-    TransposeCUDAKernel<T>                                                    \
-        <<<CAFFE_GET_BLOCKS(size),                                            \
-           CAFFE_CUDA_NUM_THREADS,                                            \
-           0,                                                                 \
-           context->cuda_stream()>>>(size, ndim, dims, nullptr, axes, X, Y);  \
-  }                                                                           \
-  template <>                                                                 \
-  void Transpose<T, CUDAContext>(                                             \
-      const int size,                                                         \
-      const int ndim,                                                         \
-      const int* x_dims,                                                      \
-      const int* y_dims,                                                      \
-      const int* axes,                                                        \
-      const T* X,                                                             \
-      T* Y,                                                                   \
-      CUDAContext* context) {                                                 \
-    CAFFE_ENFORCE_LE(                                                         \
-        ndim,                                                                 \
-        kCompileTimeCUDAMaxTransposeDims,                                     \
-        "ndim exceeds compile time max.");                                    \
-    TransposeCUDAKernel<T>                                                    \
-        <<<CAFFE_GET_BLOCKS(size),                                            \
-           CAFFE_CUDA_NUM_THREADS,                                            \
-           0,                                                                 \
-           context->cuda_stream()>>>(size, ndim, x_dims, y_dims, axes, X, Y); \
+#define CAFFE2_SPECIALIZED_CUDA_BROADCAST(T)                                \
+  template <>                                                               \
+  void Broadcast<T, CUDAContext>(                                           \
+      const int X_ndim,                                                     \
+      const int* X_dims,                                                    \
+      const int Y_ndim,                                                     \
+      const int* Y_dims,                                                    \
+      const T* X,                                                           \
+      T* Y,                                                                 \
+      CUDAContext* context) {                                               \
+    CAFFE_ENFORCE_LE(                                                       \
+        Y_ndim, kCUDABroadcastMaxDims, "Y_ndim exceeds compile time max."); \
+    BroadcastCUDA<T>(X_ndim, X_dims, Y_ndim, Y_dims, X, Y, context);        \
+  }
+CAFFE2_SPECIALIZED_CUDA_BROADCAST(float)
+#undef CAFFE2_SPECIALIZED_CUDA_BROADCAST
+
+namespace {
+
+constexpr int kCUDAMomentsMaxDims = 8;
+
+template <typename T>
+__global__ void RowwiseMomentsCUDAKernel(
+    const int rows,
+    const int cols,
+    const T* X,
+    T* mean,
+    T* variance) {
+  __shared__ typename BlockReduce<T>::TempStorage m_storage;
+  __shared__ typename BlockReduce<T>::TempStorage v_storage;
+  for (int i = blockIdx.x; i < rows; i += gridDim.x) {
+    T m_val = 0;
+    T v_val = 0;
+    for (int j = threadIdx.x; j < cols; j += blockDim.x) {
+      const int X_index = i * cols + j;
+#if __CUDA_ARCH__ >= 350
+      m_val += __ldg(X + X_index);
+      v_val += __ldg(X + X_index) * __ldg(X + X_index);
+#else
+      m_val += X[X_index];
+      v_val += X[X_index] * X[X_index];
+#endif
+    }
+    m_val = BlockReduce<T>(m_storage).Reduce(m_val, cub::Sum());
+    v_val = BlockReduce<T>(v_storage).Reduce(v_val, cub::Sum());
+    if (threadIdx.x == 0) {
+      mean[i] = m_val / static_cast<T>(cols);
+      variance[i] = v_val / static_cast<T>(cols) - mean[i] * mean[i];
+    }
+    __syncthreads();
+  }
+}
+
+template <typename T>
+void MomentsCUDAImpl(
+    const int num_dims,
+    const int* dims,
+    const int num_axes,
+    const int* axes,
+    const T* X,
+    T* mean,
+    T* variance,
+    CUDAContext* context,
+    Tensor<CUDAContext>* scratch_ptr) {
+  const std::vector<int> transpose_axes =
+      MakeTransposeAxes(num_dims, dims, num_axes, axes);
+  const int d = num_dims - num_axes;
+  int outer_size = 1;
+  for (int i = 0; i < d; ++i) {
+    outer_size *= dims[transpose_axes[i]];
+  }
+  int inner_size = 1;
+  for (int i = d; i < num_dims; ++i) {
+    inner_size *= dims[transpose_axes[i]];
+  }
+  const T* X_data = X;
+  if (transpose_axes[d] != d) {
+    scratch_ptr->Resize(std::vector<int>{outer_size, inner_size});
+    Transpose<T, CUDAContext>(
+        num_dims,
+        dims,
+        transpose_axes.data(),
+        X,
+        scratch_ptr->mutable_data<T>(),
+        context);
+    X_data = scratch_ptr->data<T>();
+  }
+  RowwiseMomentsCUDAKernel<T>
+      <<<std::min(outer_size, CAFFE_MAXIMUM_NUM_BLOCKS),
+         CAFFE_CUDA_NUM_THREADS,
+         0,
+         context->cuda_stream()>>>(
+          outer_size, inner_size, X_data, mean, variance);
+}
+
+} // namespace
+
+#define CAFFE2_SPECIALIZED_CUDA_MOMENTS(T)           \
+  template <>                                        \
+  void Moments<T, CUDAContext>(                      \
+      const int num_dims,                            \
+      const int* dims,                               \
+      const int num_axes,                            \
+      const int* axes,                               \
+      const T* X,                                    \
+      T* mean,                                       \
+      T* variance,                                   \
+      CUDAContext* context,                          \
+      Tensor<CUDAContext>* scratch_ptr) {            \
+    CAFFE_ENFORCE_LE(num_dims, kCUDAMomentsMaxDims); \
+    CAFFE_ENFORCE_LE(num_axes, num_dims);            \
+    MomentsCUDAImpl<T>(                              \
+        num_dims,                                    \
+        dims,                                        \
+        num_axes,                                    \
+        axes,                                        \
+        X,                                           \
+        mean,                                        \
+        variance,                                    \
+        context,                                     \
+        scratch_ptr);                                \
+  }
+CAFFE2_SPECIALIZED_CUDA_MOMENTS(float)
+#undef CAFFE2_SPECIALIZED_CUDA_MOMENTS
+
+namespace {
+
+constexpr int kCUDATransposeMaxDims = 8;
+
+template <typename T, int D>
+void EigenTransposeCUDAImpl(
+    const int* dims,
+    const int* axes,
+    const T* X,
+    T* Y,
+    CUDAContext* context) {
+  Eigen::DSizes<Eigen::DenseIndex, D> X_dims;
+  Eigen::DSizes<Eigen::DenseIndex, D> Y_dims;
+  Eigen::array<Eigen::DenseIndex, D> axes_array;
+  for (int i = 0; i < D; ++i) {
+    X_dims[i] = static_cast<Eigen::DenseIndex>(dims[D - 1 - i]);
+    Y_dims[i] = static_cast<Eigen::DenseIndex>(dims[D - 1 - axes[i]]);
+    axes_array[D - 1 - i] = static_cast<Eigen::DenseIndex>(D - 1 - axes[i]);
+  }
+  const cudaStream_t cuda_stream = context->cuda_stream();
+  const Eigen::CudaStreamDevice stream_device(
+      &cuda_stream, context->cuda_gpu_id());
+  const Eigen::GpuDevice gpu_device(&stream_device);
+  EigenTensorMap<T, D>(Y, Y_dims).device(gpu_device) =
+      EigenTensorMap<T, D>(const_cast<T*>(X), X_dims).shuffle(axes_array);
+}
+
+template <typename T>
+bool EigenTransposeCUDA(
+    const int ndim,
+    const int* dims,
+    const int* axes,
+    const T* X,
+    T* Y,
+    CUDAContext* context) {
+#if EIGEN_VERSION_AT_LEAST(3, 3, 0)
+  switch (ndim) {
+    case 1: {
+      EigenTransposeCUDAImpl<T, 1>(dims, axes, X, Y, context);
+      return true;
+    }
+    case 2: {
+      EigenTransposeCUDAImpl<T, 2>(dims, axes, X, Y, context);
+      return true;
+    }
+    case 3: {
+      EigenTransposeCUDAImpl<T, 3>(dims, axes, X, Y, context);
+      return true;
+    }
+    case 4: {
+      EigenTransposeCUDAImpl<T, 4>(dims, axes, X, Y, context);
+      return true;
+    }
+    case 5: {
+      EigenTransposeCUDAImpl<T, 5>(dims, axes, X, Y, context);
+      return true;
+    }
+    case 6: {
+      EigenTransposeCUDAImpl<T, 6>(dims, axes, X, Y, context);
+      return true;
+    }
+    case 7: {
+      EigenTransposeCUDAImpl<T, 7>(dims, axes, X, Y, context);
+      return true;
+    }
+    case 8: {
+      EigenTransposeCUDAImpl<T, 8>(dims, axes, X, Y, context);
+      return true;
+    }
+    default: { return false; }
+  }
+#endif // EIGEN_VERSION_AT_LEAST(3, 3, 0)
+  return false;
+}
+
+template <typename T, int D>
+__global__ void TransposeCUDAKernel(
+    const int size,
+    const SimpleArray<int, D> X_strides,
+    const SimpleArray<int, D> Y_dims,
+    const T* X,
+    T* Y) {
+  CUDA_1D_KERNEL_LOOP(Y_index, size) {
+    int X_index = 0;
+    int Y_index_val = Y_index;
+#pragma unroll
+    for (int i = D - 1; i >= 0; --i) {
+      X_index += (Y_index_val % Y_dims.data[i]) * X_strides.data[i];
+      Y_index_val /= Y_dims.data[i];
+    }
+#if __CUDA_ARCH__ >= 350
+    Y[Y_index] = __ldg(X + X_index);
+#else
+    Y[Y_index] = X[X_index];
+#endif
+  }
+}
+
+template <int D>
+void ComputeXStride(
+    const int* X_dims,
+    const int* axes,
+    int* X_strides) {
+  int buff[D];
+  int cur_stride = 1;
+  for (int i = D - 1; i >= 0; --i) {
+    buff[i] = cur_stride;
+    cur_stride *= X_dims[i];
+  }
+  for (int i = 0; i < D; ++i) {
+    X_strides[i] = buff[axes[i]];
+  }
+}
+
+template <typename T, int D>
+void TransposeCUDAImpl(
+    const int* dims,
+    const int* axes,
+    const T* X,
+    T* Y,
+    CUDAContext* context) {
+  SimpleArray<int, D> X_strides;
+  SimpleArray<int, D> Y_dims;
+  ComputeXStride<D>(dims, axes, X_strides.data);
+  int size = 1;
+  for (int i = 0; i < D; ++i) {
+    Y_dims.data[i] = dims[axes[i]];
+    size *= dims[i];
+  }
+  TransposeCUDAKernel<T, D>
+      <<<CAFFE_GET_BLOCKS(size),
+         CAFFE_CUDA_NUM_THREADS,
+         0,
+         context->cuda_stream()>>>(size, X_strides, Y_dims, X, Y);
+}
+
+template <typename T>
+void TransposeCUDA(
+    const int ndim,
+    const int* dims,
+    const int* axes,
+    const T* X,
+    T* Y,
+    CUDAContext* context) {
+  switch (ndim) {
+    case 1: {
+      TransposeCUDAImpl<T, 1>(dims, axes, X, Y, context);
+      break;
+    }
+    case 2: {
+      TransposeCUDAImpl<T, 2>(dims, axes, X, Y, context);
+      break;
+    }
+    case 3: {
+      TransposeCUDAImpl<T, 3>(dims, axes, X, Y, context);
+      break;
+    }
+    case 4: {
+      TransposeCUDAImpl<T, 4>(dims, axes, X, Y, context);
+      break;
+    }
+    case 5: {
+      TransposeCUDAImpl<T, 5>(dims, axes, X, Y, context);
+      break;
+    }
+    case 6: {
+      TransposeCUDAImpl<T, 6>(dims, axes, X, Y, context);
+      break;
+    }
+    case 7: {
+      TransposeCUDAImpl<T, 7>(dims, axes, X, Y, context);
+      break;
+    }
+    case 8: {
+      TransposeCUDAImpl<T, 8>(dims, axes, X, Y, context);
+      break;
+    }
+    default: { break; }
+  }
+}
+
+} // namespace
+
+#define CAFFE2_SPECIALIZED_CUDA_TRANSPOSE(T)                            \
+  template <>                                                           \
+  void Transpose<T, CUDAContext>(                                       \
+      const int ndim,                                                   \
+      const int* dims,                                                  \
+      const int* axes,                                                  \
+      const T* X,                                                       \
+      T* Y,                                                             \
+      CUDAContext* context) {                                           \
+    CAFFE_ENFORCE_LE(                                                   \
+        ndim, kCUDATransposeMaxDims, "ndim exceeds compile time max."); \
+    if (EigenTransposeCUDA(ndim, dims, axes, X, Y, context)) {          \
+      return;                                                           \
+    }                                                                   \
+    TransposeCUDA<T>(ndim, dims, axes, X, Y, context);                  \
   }
 CAFFE2_SPECIALIZED_CUDA_TRANSPOSE(float)
 CAFFE2_SPECIALIZED_CUDA_TRANSPOSE(double)
 CAFFE2_SPECIALIZED_CUDA_TRANSPOSE(int)
-CAFFE2_SPECIALIZED_CUDA_TRANSPOSE(long)
+CAFFE2_SPECIALIZED_CUDA_TRANSPOSE(TIndex)
 #undef CAFFE2_SPECIALIZED_CUDA_TRANSPOSE
 
 } // namespace math

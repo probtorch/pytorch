@@ -1,6 +1,6 @@
 # Welcome to the PyTorch setup.py.
 #
-# Environment variables you are probably interestd in:
+# Environment variables you are probably interested in:
 #
 #   DEBUG
 #     build with -O0 and -g (debug symbols)
@@ -642,6 +642,7 @@ main_sources = [
     "torch/csrc/jit/passes/graph_fuser.cpp",
     "torch/csrc/jit/passes/onnx.cpp",
     "torch/csrc/jit/passes/dead_code_elimination.cpp",
+    "torch/csrc/jit/passes/lower_tuples.cpp",
     "torch/csrc/jit/passes/common_subexpression_elimination.cpp",
     "torch/csrc/jit/passes/peephole.cpp",
     "torch/csrc/jit/passes/inplace_check.cpp",
@@ -685,6 +686,7 @@ main_sources = [
     "torch/csrc/tensor/python_tensor.cpp",
     "torch/csrc/onnx/onnx.pb.cpp",
     "torch/csrc/onnx/onnx.cpp",
+    "torch/csrc/onnx/init.cpp",
 ]
 
 try:
@@ -848,7 +850,7 @@ if WITH_CUDA:
                         )
     extensions.append(THNVRTC)
 
-version = '0.4.0a0'
+version = '0.5.0a0'
 if os.getenv('PYTORCH_BUILD_VERSION'):
     assert os.getenv('PYTORCH_BUILD_NUMBER') is not None
     build_number = int(os.getenv('PYTORCH_BUILD_NUMBER'))

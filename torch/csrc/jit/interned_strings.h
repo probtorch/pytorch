@@ -56,7 +56,9 @@ _(prim, Reverse) \
 _(prim, Return) \
 _(prim, Store) \
 _(prim, Undefined) \
-_(prim, Starred)
+_(prim, Starred) \
+_(prim, TupleConstruct) \
+_(prim, TupleUnpack)
 /* end */
 
 // Workaround for some not-yet-defined ATen symbols, see
@@ -101,6 +103,8 @@ _(onnx, Squeeze) \
 _(onnx, Sub) \
 _(onnx, Transpose) \
 _(onnx, Unsqueeze) \
+_(onnx, Loop) \
+_(onnx, If)
 /* end */
 
 // These symbols are attribute keys.  They are shared between both ONNX and ATen
