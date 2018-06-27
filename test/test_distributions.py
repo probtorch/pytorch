@@ -2851,6 +2851,7 @@ class TestKL(TestCase):
             (Exponential(1), Beta(2, 3)),
             (Exponential(1), Pareto(2, 3)),
             (Exponential(1), Uniform(-2, 3)),
+            (Geometric(0.3), Binomial(10, 0.2)),
             (Gamma(1, 2), Beta(3, 4)),
             (Gamma(1, 2), Pareto(3, 4)),
             (Gamma(1, 2), Uniform(-3, 4)),

@@ -5,6 +5,35 @@ from torch.distributions.distribution import Distribution
 from torch.distributions.utils import broadcast_all, probs_to_logits, lazy_property, logits_to_probs
 
 
+def _log1pmtensor(logit_tensor):
+    """
+    Calculates (-tensor).log1p() using logit_tensor = tensor.log() - (-tensor).log()
+    Useful for distributions with extreme probs.
+    Note that: (-probs).log1p() = max_val - (logits + 2 * max_val).exp().log1p()
+    """
+    max_val = (-logit_tensor).clamp(min=0.0)
+    return max_val - torch.log1p((logit_tensor + 2 * max_val).exp())
+
+
+def _Elnchoosek(p):
+    """
+    Returns expected value of log(nchoosek), log(n!), log(k!), log(n-k!);
+    where k~p,  p is a Binomial distribution
+    """
+    s = p.enumerate_support()
+    s[0] = 1  # 0! = 1
+    # x is log factorial matrix i.e. x[k,...] = log(k!)
+    x = torch.cumsum(s.log(), dim=0)
+    s[0] = 0
+    lnchoosek = x[-1] - x - x.flip(0)
+    elognfac = x[-1]
+    elogkfac = ((lnchoosek + s * p.logits + p.total_count * _log1pmtensor(p.logits)).exp() *
+                x).sum(dim=0)
+    elognmkfac = ((lnchoosek + s * p.logits + p.total_count * _log1pmtensor(p.logits)).exp() *
+                  x.flip(0)).sum(dim=0)
+    return elognfac - elogkfac - elognmkfac, (elognfac, elogkfac, elognmkfac)
+
+
 class Binomial(Distribution):
     r"""
     Creates a Binomial distribution parameterized by `total_count` and
@@ -77,11 +106,6 @@ class Binomial(Distribution):
     def param_shape(self):
         return self._param.size()
 
-    def _log1pmprobs(self):
-        # Note that: torch.log1p(-self.probs)) = max_val - torch.log1p((self.logits + 2 * max_val).exp()))
-        max_val = (-self.logits).clamp(min=0.0)
-        return max_val - torch.log1p((self.logits + 2 * max_val).exp())
-
     def sample(self, sample_shape=torch.Size()):
         with torch.no_grad():
             max_count = max(int(self.total_count.max()), 1)
@@ -100,7 +124,7 @@ class Binomial(Distribution):
         log_factorial_k = torch.lgamma(value + 1)
         log_factorial_nmk = torch.lgamma(self.total_count - value + 1)
         return (log_factorial_n - log_factorial_k - log_factorial_nmk +
-                value * self.logits + self.total_count * self._log1pmprobs())
+                value * self.logits + self.total_count * _log1pmtensor(self.logits))
 
     def enumerate_support(self):
         total_count = int(self.total_count.max())
@@ -112,26 +136,6 @@ class Binomial(Distribution):
         values = values.expand((-1,) + self._batch_shape)
         return values
 
-    def _Elnchoosek(self):
-        # return expected value of log(nchoosek), log(n!),log(k!), log(n-k!)
-        # where k~Bin(n,p)
-        s = self.enumerate_support()
-        s[0] = 1  # 0! = 1
-        # x is factorial matrix i.e. x[k,...] = k!
-        x = torch.cumsum(s.log(), dim=0)
-        s[0] = 0
-        indices = [slice(None)] * x.dim()
-        indices[0] = torch.arange(x.size(0) - 1, -1, -1,
-                                  dtype=torch.long, device=x.device)
-        # x[tuple(indices)] is x reversed on first axis
-        lnchoosek = x[-1] - x - x[tuple(indices)]
-        elognfac = x[-1]
-        elogkfac = ((lnchoosek + s * self.logits + self.total_count * self._log1pmprobs()).exp() *
-                    x).sum(dim=0)
-        elognmkfac = ((lnchoosek + s * self.logits + self.total_count * self._log1pmprobs()).exp() *
-                      x[tuple(indices)]).sum(dim=0)
-        return elognfac - elogkfac - elognmkfac, (elognfac, elogkfac, elognmkfac)
-
     def entropy(self):
-        elnchoosek, _ = self._Elnchoosek()
-        return - elnchoosek - self.mean * self.logits - self.total_count * self._log1pmprobs()
+        elnchoosek, _ = _Elnchoosek(self)
+        return - elnchoosek - self.mean * self.logits - self.total_count * _log1pmtensor(self.logits)

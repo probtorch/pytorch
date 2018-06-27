@@ -6,7 +6,7 @@ import torch
 
 from .bernoulli import Bernoulli
 from .beta import Beta
-from .binomial import Binomial
+from .binomial import Binomial, _log1pmtensor, _Elnchoosek
 from .categorical import Categorical
 from .dirichlet import Dirichlet
 from .distribution import Distribution
@@ -199,27 +199,10 @@ def _kl_binomial_binomial(p, q):
     # kullback-leibler-divergence-for-binomial-distributions-p-and-q
     if (p.total_count < q.total_count).any():
         raise NotImplementedError('KL between Binomials where q.total_count > p.total_count is not implemented')
-    kl = p.total_count * (p.probs * (p.logits - q.logits) + p._log1pmprobs() - q._log1pmprobs())
+    kl = p.total_count * (p.probs * (p.logits - q.logits) + _log1pmtensor(p.logits) - _log1pmtensor(q.logits))
     inf_idxs = p.total_count > q.total_count
     kl[inf_idxs] = _infinite_like(kl[inf_idxs])
     return kl
-
-
-@register_kl(Binomial, Poisson)
-def _kl_binomial_poisson(p, q):
-    _, (e1, _, e3) = p._Elnchoosek()
-    return (e1 - e3 +
-            p.mean * (p.logits - q.rate.log()) +
-            p.total_count * p._log1pmprobs() +
-            q.rate)
-
-
-@register_kl(Binomial, Geometric)
-def _kl_binomial_geometric(p, q):
-    elnchoosek, _ = p._Elnchoosek()
-    return (elnchoosek +
-            (p.logits - (-q.probs).log1p()) * p.mean +
-            p.total_count * p._log1pmprobs() - q.probs.log())
 
 
 @register_kl(Categorical, Categorical)
@@ -288,11 +271,6 @@ def _kl_gumbel_gumbel(p, q):
 @register_kl(Geometric, Geometric)
 def _kl_geometric_geometric(p, q):
     return -p.entropy() - torch.log1p(-q.probs) / p.probs - q.logits
-
-
-@register_kl(Geometric, Binomial)
-def _kl_geometric_infinity(p, q):
-    return _infinite_like(p.probs)
 
 
 @register_kl(HalfNormal, HalfNormal)
@@ -418,6 +396,23 @@ def _kl_beta_uniform(p, q):
     return result
 
 
+@register_kl(Binomial, Poisson)
+def _kl_binomial_poisson(p, q):
+    _, (e1, _, e3) = _Elnchoosek(p)
+    return (e1 - e3 +
+            p.mean * (p.logits - q.rate.log()) +
+            p.total_count * _log1pmtensor(p.logits) +
+            q.rate)
+
+
+@register_kl(Binomial, Geometric)
+def _kl_binomial_geometric(p, q):
+    elnchoosek, _ = _Elnchoosek(p)
+    return (elnchoosek +
+            (p.logits - (-q.probs).log1p()) * p.mean +
+            p.total_count * _log1pmtensor(p.logits) - q.probs.log())
+
+
 @register_kl(Exponential, Beta)
 @register_kl(Exponential, Pareto)
 @register_kl(Exponential, Uniform)
@@ -488,6 +483,11 @@ def _kl_gamma_normal(p, q):
     t3 = q.loc * p.concentration / p.rate
     t4 = 0.5 * q.loc.pow(2)
     return t1 + (p.concentration - 1) * p.concentration.digamma() + (t2 - t3 + t4) / var_normal
+
+
+@register_kl(Geometric, Binomial)
+def _kl_geometric_infinity(p, q):
+    return _infinite_like(p.probs)
 
 
 @register_kl(Gumbel, Beta)
