@@ -39,7 +39,7 @@ void addInputs(Node *n, const char * name, bool value)               { detail::g
 void addInputs(Node *n, const char * name, double value)             { detail::genericAddInput(n, value); }
 void addInputs(Node *n, const char * name, const at::Scalar& value)  { detail::genericAddInput(n, value); }
 void addInputs(Node *n, const char * name, const at::Tensor& value)  { n->addInput(getValueTrace(value)); }
-void addInputs(Node *n, const char * name, const std::string& value)         { detail::badArgType(); }
+void addInputs(Node *n, const char * name, const std::string& value) { detail::genericAddInput(n, value); }
 void addInputs(Node *n, const char * name, const at::SparseTensorRef& value) { detail::badArgType(); }
 
 void addInputs(Node *n, const char * name, at::TensorList value) {
