@@ -144,6 +144,24 @@ class Distribution(object):
         """
         raise NotImplementedError
 
+    def detached_log_prob(self, value):
+        """
+        Returns the log of the probability density/mass function, detaching
+        gradients with respect to parameters but preserving gradients with
+        respect to `value`.
+
+        Args:
+            value (Tensor):
+        """
+        # This exploits the .expand() method to detach gradients.
+        # This could be replaced with cleaner logic if distributions provided generic
+        # access to parameters.
+        batch_dim = 1 + max(len(self.batch_shape), value.dim() - len(self.event_shape))
+        detached_shape = (1,) * (batch_dim - len(self.batch_shape)) + self.batch_shape
+        with torch.no_grad():
+            detached = self.expand(detached_shape)
+        return detached.log_prob(value)[0]
+
     def cdf(self, value):
         """
         Returns the cumulative density/mass function evaluated at

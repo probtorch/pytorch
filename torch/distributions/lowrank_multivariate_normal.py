@@ -114,8 +114,8 @@ class LowRankMultivariateNormal(Distribution):
         new.loc = self.loc.expand(loc_shape)
         new.cov_diag = self.cov_diag.expand(loc_shape)
         new.cov_factor = self.cov_factor.expand(loc_shape + self.cov_factor.shape[-1:])
-        new._unbroadcasted_cov_factor = self._unbroadcasted_cov_factor
-        new._unbroadcasted_cov_diag = self._unbroadcasted_cov_diag
+        new._unbroadcasted_cov_factor = self._unbroadcasted_cov_factor[...]
+        new._unbroadcasted_cov_diag = self._unbroadcasted_cov_diag[...]
         new._capacitance_tril = self._capacitance_tril
         super(LowRankMultivariateNormal, new).__init__(batch_shape,
                                                        self.event_shape,
